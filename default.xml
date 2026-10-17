@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright (c) 2026 <copyright holder>
+
+  SPDX-License-Identifier: BSD-2-Clause
+
+  The AOSP projects of the POC, pinned to Android 17 build 16373615.
+  A project with FreeBSD changes comes from its repository on GitHub
+  (branch "freebsd"); the others come from AOSP at the pinned commit.
+  The FreeBSD side is https://github.com/ayeed-xec/freebsd-src, branch
+  "android-native-15.1".
+-->
+<manifest>
+  <remote name="aosp" fetch="https://android.googlesource.com/" />
+  <remote name="github" fetch="https://github.com/ayeed-xec/" />
+  <default remote="aosp" />
+
+  <project path="art" name="platform_art" remote="github" revision="freebsd" />
+  <project path="system/libbase" name="platform_system_libbase" remote="github" revision="freebsd" />
+  <project path="system/logging" name="platform_system_logging" remote="github" revision="freebsd" />
+
+  <project path="bionic" name="platform/bionic" revision="06356e41c5ed7b12220b24c05ba4fdb873b126a7" />
+  <project path="frameworks/native" name="platform/frameworks/native" revision="ae266dcb706d083868578cfedce381ef44488a07" />
+  <project path="libnativehelper" name="platform/libnativehelper" revision="5b63a7e308ca88c5c4a2a74dfda9c73ed17cfebb" />
+  <project path="system/core" name="platform/system/core" revision="545d2487e38192a2ce25040897ced877cf6b4f53" />
+  <project path="system/libprocinfo" name="platform/system/libprocinfo" revision="b58259e79c58deb1132e11d74ea90a2dc441d84f" />
+</manifest>

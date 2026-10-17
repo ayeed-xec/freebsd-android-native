@@ -1,0 +1,66 @@
+# VM images, keys, firmware vars, logs — large or secret, never committed
+/vm/
+*.qcow2
+*.qcow2.xz
+*.raw
+*.raw.xz
+*.img
+*.iso
+*.fd
+
+# Android images and extracted rootfs
+/images/
+/rootfs/
+
+# FreeBSD kernel module build products
+*.ko
+*.ko.debug
+*.o
+*.kld
+*.full
+.depend*
+export_syms
+machine
+x86
+i386
+opt_*.h
+vnode_if*.h
+device_if.h
+bus_if.h
+pci_if.h
+
+# Test binaries
+/tests/bin/
+
+.DS_Store
+
+# Code-graph tooling and source mirrors (large, regenerable)
+/.venv-graphify/
+/src/
+graphify-out/cache/
+# Restricted research (GPL-exposed notes; see docs/provenance.md). Kept on disk,
+# guarded by the clean-room policy, and never committed so that no GPL-derived
+# text enters the repository history.
+/docs/research/areas.json
+/docs/research/feasibility-report.md
+/docs/research/native-design-data.json
+/docs/research/no-linuxulator-cost-data.json
+
+# Clean-room runtime state (docs/harness/cleanroom-agent-harness.md, decision D1).
+# provenance.jsonl is audit evidence and IS committed; its lock is not.
+/.cleanroom/log/
+/.cleanroom/queue/
+/.cleanroom/gates/
+/.cleanroom/scan/
+/.cleanroom/state/
+/.cleanroom/web-archive/
+/.cleanroom/*.lock
+/.claude/settings.local.json
+# Python bytecode
+__pycache__/
+
+# Security scanners (Python tools)
+/.venv-security/
+
+# Offload tool manifests (local)
+/.offload/

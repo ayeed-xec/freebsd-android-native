@@ -1,0 +1,26 @@
+# Source mirrors for the native Android-on-FreeBSD port.
+# Fetched by tools/fetch-sources.sh into src/<name>; indexed by tools/graph.sh.
+#
+# Columns (whitespace separated):
+#   name    local directory under src/
+#   kind    aosp     -> revision pinned by src/manifests/manifest_${AOSP_BUILD}.xml
+#           freebsd  -> branch/tag given in the ref column
+#   repo    AOSP project path, or a git URL
+#   ref     'manifest' for aosp; branch or tag for freebsd
+#   sparse  comma-separated directories to check out, or '-' for the whole tree
+#
+# Android 17 (CP2A.260605.016), AOSP CI build 16373615; FreeBSD releng/15.1.
+
+# --- Android native layer (bring-up order) --------------------------------------
+bionic             aosp     platform/bionic                 manifest  -
+libbase            aosp     platform/system/libbase         manifest  -
+logging            aosp     platform/system/logging         manifest  -
+system-core        aosp     platform/system/core            manifest  init,libcutils,libutils,libprocessgroup,libsystem,libsysutils,property_service,rootdir,toolbox,debuggerd,include
+libprocinfo        aosp     platform/system/libprocinfo     manifest  -
+frameworks-native  aosp     platform/frameworks/native      manifest  libs/binder,cmds/servicemanager,include,libs/ui,libs/gui,services/surfaceflinger
+libnativehelper    aosp     platform/libnativehelper        manifest  -
+art                aosp     platform/art                    manifest  runtime,libartbase,libartpalette,libdexfile,dalvikvm,sigchainlib,libnativebridge,libnativeloader,dex2oat,libelffile,cmdline,build
+
+# --- FreeBSD (kernel + native C runtime the port targets) -----------------------
+freebsd-kernel     freebsd  https://git.FreeBSD.org/src.git releng/15.1  sys/kern,sys/sys,sys/vm,sys/fs/devfs,sys/dev/evdev,sys/arm64/arm64,sys/arm64/include,sys/amd64/amd64,sys/amd64/include,sys/compat/freebsd32,sys/conf,sys/modules/evdev,share/man/man2,share/man/man4,share/man/man9,tests/sys/kern
+freebsd-libc       freebsd  https://git.FreeBSD.org/src.git releng/15.1  lib/libc,lib/libsys,lib/libthr,libexec/rtld-elf,include
