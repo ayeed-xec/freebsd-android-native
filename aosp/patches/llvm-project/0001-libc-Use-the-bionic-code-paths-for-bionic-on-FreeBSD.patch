@@ -1,0 +1,147 @@
+From 8ec30fc2d558b61c9901cce062d0bac6bbb2bf4f Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 17 Oct 2026 13:47:08 +0000
+Subject: [PATCH] [libc++] Use the bionic code paths for bionic on FreeBSD
+
+Android code on FreeBSD uses bionic, not FreeBSD's libc, and the
+compiler defines __FreeBSD__ for it.  libc++ tests __FreeBSD__ for some
+libc API questions.  For these questions, libc++ now tests __BIONIC__
+first, as bionic's convention says: libc questions test __BIONIC__,
+kernel questions test __linux__ or __FreeBSD__.
+
+- platform.h: on FreeBSD, include <features.h> when it exists.  Only
+  bionic has it, and it defines __BIONIC__.
+- __config, abi.h, get_c_locale.h, locale_base_api.h, stdlib.h and
+  config_elast.h: bionic gets the same choices as on Linux (the
+  pair ABI, the locale support of support/linux.h, the C locale, ELAST,
+  the wctype and long double math declarations).
+
+The atomic wait code keeps its FreeBSD _umtx_op path, because that is a
+kernel question.  The project freebsd-android-native carries this patch
+(ADR 0002, decision 1.7).
+---
+ libcxx/include/__config                       | 4 ++--
+ libcxx/include/__configuration/abi.h          | 2 +-
+ libcxx/include/__configuration/platform.h     | 6 ++++--
+ libcxx/include/__locale_dir/get_c_locale.h    | 2 +-
+ libcxx/include/__locale_dir/locale_base_api.h | 4 ++--
+ libcxx/include/stdlib.h                       | 2 +-
+ libcxx/src/include/config_elast.h             | 2 +-
+ 7 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/libcxx/include/__config b/libcxx/include/__config
+index f72f091d..087a13a3 100644
+--- a/libcxx/include/__config
++++ b/libcxx/include/__config
+@@ -461,7 +461,7 @@ typedef __char32_t char32_t;
+ #    define _LIBCPP_DECLARE_STRONG_ENUM_EPILOG(x)
+ #  endif // _LIBCPP_CXX03_LANG
+ 
+-#  ifdef __FreeBSD__
++#  if defined(__FreeBSD__) && !defined(__BIONIC__)
+ #    define _DECLARE_C99_LDBL_MATH 1
+ #  endif
+ 
+@@ -485,7 +485,7 @@ typedef __char32_t char32_t;
+ #    define _LIBCPP_HAS_ALIGNED_ALLOCATION 1
+ #  endif
+ 
+-#  if defined(__APPLE__) || defined(__FreeBSD__)
++#  if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__))
+ #    define _LIBCPP_WCTYPE_IS_MASK
+ #  endif
+ 
+diff --git a/libcxx/include/__configuration/abi.h b/libcxx/include/__configuration/abi.h
+index 5ce040fb..e50bec1d 100644
+--- a/libcxx/include/__configuration/abi.h
++++ b/libcxx/include/__configuration/abi.h
+@@ -86,7 +86,7 @@
+ #elif _LIBCPP_ABI_VERSION == 1
+ // Feature macros for disabling pre ABI v1 features. All of these options
+ // are deprecated.
+-#  if defined(__FreeBSD__)
++#  if defined(__FreeBSD__) && !defined(__BIONIC__)
+ #    define _LIBCPP_DEPRECATED_ABI_DISABLE_PAIR_TRIVIAL_COPY_CTOR
+ #  endif
+ #endif
+diff --git a/libcxx/include/__configuration/platform.h b/libcxx/include/__configuration/platform.h
+index 644fe172..5c2b9610 100644
+--- a/libcxx/include/__configuration/platform.h
++++ b/libcxx/include/__configuration/platform.h
+@@ -30,8 +30,10 @@
+ // ... add new file formats here ...
+ #endif
+ 
+-// Need to detect which libc we're using if we're on Linux.
+-#if (defined(__linux__) || defined(__AMDGPU__) || defined(__NVPTX__)) && __has_include(<features.h>)
++// Need to detect which libc we're using if we're on Linux. On FreeBSD, only
++// bionic has <features.h>; it defines __BIONIC__.
++#if (defined(__linux__) || defined(__FreeBSD__) || defined(__AMDGPU__) || defined(__NVPTX__)) &&                         \
++    __has_include(<features.h>)
+ #  include <features.h>
+ #  if defined(__GLIBC_PREREQ)
+ #    define _LIBCPP_GLIBC_PREREQ(a, b) __GLIBC_PREREQ(a, b)
+diff --git a/libcxx/include/__locale_dir/get_c_locale.h b/libcxx/include/__locale_dir/get_c_locale.h
+index e8bac9a8..449ad8d6 100644
+--- a/libcxx/include/__locale_dir/get_c_locale.h
++++ b/libcxx/include/__locale_dir/get_c_locale.h
+@@ -22,7 +22,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD
+ 
+ // FIXME: This should really be part of the locale base API
+ 
+-#  if defined(__APPLE__) || defined(__FreeBSD__)
++#  if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__))
+ #    define _LIBCPP_GET_C_LOCALE 0
+ #  elif defined(__NetBSD__)
+ #    define _LIBCPP_GET_C_LOCALE LC_C_LOCALE
+diff --git a/libcxx/include/__locale_dir/locale_base_api.h b/libcxx/include/__locale_dir/locale_base_api.h
+index 0474c1db..986d11ea 100644
+--- a/libcxx/include/__locale_dir/locale_base_api.h
++++ b/libcxx/include/__locale_dir/locale_base_api.h
+@@ -108,7 +108,7 @@
+ 
+ #  if defined(__APPLE__)
+ #    include <__locale_dir/support/apple.h>
+-#  elif defined(__FreeBSD__)
++#  elif defined(__FreeBSD__) && !defined(__BIONIC__)
+ #    include <__locale_dir/support/freebsd.h>
+ #  elif defined(__NetBSD__)
+ #    include <__locale_dir/support/netbsd.h>
+@@ -116,7 +116,7 @@
+ #    include <__locale_dir/support/windows.h>
+ #  elif defined(__Fuchsia__)
+ #    include <__locale_dir/support/fuchsia.h>
+-#  elif defined(__linux__)
++#  elif defined(__linux__) || defined(__BIONIC__)
+ #    include <__locale_dir/support/linux.h>
+ #  elif _LIBCPP_LIBC_NEWLIB
+ #    include <__locale_dir/support/newlib.h>
+diff --git a/libcxx/include/stdlib.h b/libcxx/include/stdlib.h
+index 8dfdfa41..20e7c768 100644
+--- a/libcxx/include/stdlib.h
++++ b/libcxx/include/stdlib.h
+@@ -124,7 +124,7 @@ using std::__math::abs;
+ // MSVCRT already has the correct prototype in <stdlib.h> if __cplusplus is defined
+ #      if !defined(_LIBCPP_MSVCRT)
+ inline _LIBCPP_HIDE_FROM_ABI ldiv_t div(long __x, long __y) _NOEXCEPT { return ::ldiv(__x, __y); }
+-#        if !(defined(__FreeBSD__) && !defined(__LONG_LONG_SUPPORTED))
++#        if !(defined(__FreeBSD__) && !defined(__BIONIC__) && !defined(__LONG_LONG_SUPPORTED))
+ inline _LIBCPP_HIDE_FROM_ABI lldiv_t div(long long __x, long long __y) _NOEXCEPT { return ::lldiv(__x, __y); }
+ #        endif
+ #      endif // _LIBCPP_MSVCRT
+diff --git a/libcxx/src/include/config_elast.h b/libcxx/src/include/config_elast.h
+index be665a97..cbd9830c 100644
+--- a/libcxx/src/include/config_elast.h
++++ b/libcxx/src/include/config_elast.h
+@@ -33,7 +33,7 @@
+ // No _LIBCPP_ELAST needed on WASI
+ #elif defined(__EMSCRIPTEN__)
+ // No _LIBCPP_ELAST needed on Emscripten
+-#elif defined(__linux__) || _LIBCPP_HAS_MUSL_LIBC
++#elif defined(__linux__) || defined(__BIONIC__) || _LIBCPP_HAS_MUSL_LIBC
+ #  define _LIBCPP_ELAST 4095
+ #elif defined(__APPLE__)
+ // No _LIBCPP_ELAST needed on Apple
+-- 
+2.56.0
+

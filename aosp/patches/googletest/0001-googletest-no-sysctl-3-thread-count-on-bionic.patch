@@ -1,0 +1,46 @@
+From e94949631b72f2a43e68269a072fdfadddb23828 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeed@hotmail.co.in>
+Date: Sat, 17 Oct 2026 17:38:11 +0000
+Subject: [PATCH] googletest: no sysctl(3) thread count on bionic
+
+bionic on the FreeBSD kernel defines __FreeBSD__, so gtest-port.cc
+selects GTEST_OS_FREEBSD and its sysctl(3) and <sys/user.h> code.
+bionic has neither. On bionic, GetThreadCount() returns 0 (unknown),
+as on other systems without a thread count.
+---
+ googletest/src/gtest-port.cc | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/googletest/src/gtest-port.cc b/googletest/src/gtest-port.cc
+index 1038ad7..f71782b 100644
+--- a/googletest/src/gtest-port.cc
++++ b/googletest/src/gtest-port.cc
+@@ -61,9 +61,10 @@
+ #include <mach/vm_map.h>
+ #endif  // GTEST_OS_MAC
+ 
+-#if defined(GTEST_OS_DRAGONFLY) || defined(GTEST_OS_FREEBSD) ||   \
+-    defined(GTEST_OS_GNU_KFREEBSD) || defined(GTEST_OS_NETBSD) || \
+-    defined(GTEST_OS_OPENBSD)
++// bionic on FreeBSD has no sysctl(3): GetThreadCount() returns 0 there.
++#if (defined(GTEST_OS_DRAGONFLY) || defined(GTEST_OS_FREEBSD) ||   \
++     defined(GTEST_OS_GNU_KFREEBSD) || defined(GTEST_OS_NETBSD) || \
++     defined(GTEST_OS_OPENBSD)) && !defined(__BIONIC__)
+ #include <sys/sysctl.h>
+ #if defined(GTEST_OS_DRAGONFLY) || defined(GTEST_OS_FREEBSD) || \
+     defined(GTEST_OS_GNU_KFREEBSD)
+@@ -137,8 +138,9 @@ size_t GetThreadCount() {
+   }
+ }
+ 
+-#elif defined(GTEST_OS_DRAGONFLY) || defined(GTEST_OS_FREEBSD) || \
+-    defined(GTEST_OS_GNU_KFREEBSD) || defined(GTEST_OS_NETBSD)
++#elif (defined(GTEST_OS_DRAGONFLY) || defined(GTEST_OS_FREEBSD) || \
++       defined(GTEST_OS_GNU_KFREEBSD) || defined(GTEST_OS_NETBSD)) && \
++    !defined(__BIONIC__)
+ 
+ #ifdef GTEST_OS_NETBSD
+ #undef KERN_PROC
+-- 
+2.56.0
+

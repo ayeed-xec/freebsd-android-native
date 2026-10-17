@@ -1,0 +1,36 @@
+From 7fb920a077b6112954c719663d76fb6e3f211af6 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 17 Oct 2026 14:11:00 +0000
+Subject: [PATCH 2/2] [libc++] Allow <atomic> from bionic's <stdatomic.h>
+ before C++23
+
+libc++'s <stdatomic.h> includes the next <stdatomic.h> before C++23.
+bionic's <stdatomic.h> is built on <atomic> in C++: it includes
+<atomic> and uses its names.  <atomic> took this include for a
+mix of C and C++ atomics and stopped the build.  Do not count
+libc++'s own <stdatomic.h> when the C library is bionic.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ libcxx/include/atomic | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/libcxx/include/atomic b/libcxx/include/atomic
+index 23a3db5d..f536786f 100644
+--- a/libcxx/include/atomic
++++ b/libcxx/include/atomic
+@@ -592,7 +592,9 @@ template <class T>
+ #else
+ #  include <__config>
+ 
+-#  if defined(_LIBCPP_STDATOMIC_H) || defined(kill_dependency) || defined(atomic_load)
++// bionic's <stdatomic.h> is built on <atomic> in C++, so libc++'s
++// <stdatomic.h>, which includes bionic's, does not conflict with it.
++#  if (defined(_LIBCPP_STDATOMIC_H) && !defined(__BIONIC__)) || defined(kill_dependency) || defined(atomic_load)
+ #    define _LIBCPP_STDATOMIC_H_HAS_DEFINITELY_BEEN_INCLUDED 1
+ #  else
+ #    define _LIBCPP_STDATOMIC_H_HAS_DEFINITELY_BEEN_INCLUDED 0
+-- 
+2.56.0
+

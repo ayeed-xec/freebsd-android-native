@@ -79,6 +79,7 @@ in `src/`, from the list in `config/sources.list`.
 
 ## License
 
-- Each FreeBSD-side file has a BSD-2-Clause SPDX header. No GPL code is used.
+- Each FreeBSD-side file has a BSD-2-Clause header: the copyright line, the SPDX line
+  and the full license text. No GPL code is used.
 - AOSP files, and our changes to them, keep their AOSP licenses.
-- The copyright holder is not decided yet. The headers show `<copyright holder>`.
+- The copyright holder of our files is Ayeed Shaikh.

@@ -1,8 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Copyright (c) 2026 <copyright holder>
+  Copyright (c) 2026 Ayeed Shaikh <Ayeed.AI10@race.reva.edu.in>
 
   SPDX-License-Identifier: BSD-2-Clause
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions
+  are met:
+  1. Redistributions of source code must retain the above copyright
+     notice, this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+  OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  SUCH DAMAGE.
 
   The AOSP projects of the POC, pinned to Android 17 build 16373615.
   A project with FreeBSD changes comes from its repository on GitHub
@@ -16,10 +37,11 @@
   <default remote="aosp" />
 
   <project path="art" name="platform_art" remote="github" revision="freebsd" />
+  <project path="bionic" name="platform_bionic" remote="github" revision="freebsd" />
   <project path="system/libbase" name="platform_system_libbase" remote="github" revision="freebsd" />
+  <project path="system/libziparchive" name="platform_system_libziparchive" remote="github" revision="freebsd" />
   <project path="system/logging" name="platform_system_logging" remote="github" revision="freebsd" />
 
-  <project path="bionic" name="platform/bionic" revision="06356e41c5ed7b12220b24c05ba4fdb873b126a7" />
   <project path="frameworks/native" name="platform/frameworks/native" revision="ae266dcb706d083868578cfedce381ef44488a07" />
   <project path="libnativehelper" name="platform/libnativehelper" revision="5b63a7e308ca88c5c4a2a74dfda9c73ed17cfebb" />
   <project path="system/core" name="platform/system/core" revision="545d2487e38192a2ce25040897ced877cf6b4f53" />
