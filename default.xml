@@ -25,7 +25,7 @@
   OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
   SUCH DAMAGE.
 
-  The AOSP projects of the POC, pinned to Android 17 build 16373615.
+  The AOSP projects of freebsd-android-native, pinned to Android 17 build 16373615.
   A project with FreeBSD changes comes from its repository on GitHub
   (branch "freebsd"); the others come from AOSP at the pinned commit.
   The FreeBSD side is https://github.com/ayeed-xec/freebsd-src, branch

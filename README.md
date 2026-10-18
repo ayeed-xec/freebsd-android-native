@@ -1,6 +1,6 @@
 # freebsd-android-native
 
-A proof of concept that runs the latest Android natively on FreeBSD. Android's native
+This project runs the latest Android natively on FreeBSD. Android's native
 layer (libc, linker, ART, init, binder, system services and HALs) is built as FreeBSD
 programs that use FreeBSD system calls. There is no Linux kernel and no Linux
 compatibility layer (the Linuxulator stays off). The Java and Kotlin framework is
@@ -33,8 +33,8 @@ repository keeps its upstream license.
 
 The AOSP commits are from Android 17 build 16373615. The `upstream` branch of each AOSP
 repository is an import of the pinned tree, as in a FreeBSD vendor import. The
-`freebsd` branch adds our changes as commits on top of it. The other AOSP projects of the
-POC have no changes yet. They come from AOSP at their pinned commits.
+`freebsd` branch adds our changes as commits on top of it. The other AOSP projects have no
+changes yet. They come from AOSP at their pinned commits.
 
 ## Get the sources
 
@@ -64,7 +64,7 @@ in `src/`, from the list in `config/sources.list`.
 | `default.xml` | The `repo` manifest of the AOSP projects |
 | `config/toolchain/` | The clang configuration for the `aarch64-unknown-freebsd15-android37` target, and a CMake file for host tools |
 | `config/sources.list` | The source mirrors for `tools/fetch-sources.sh` |
-| `aosp/` | `fetch.py` and the AOSP manifest of build 16373615 |
+| `aosp/` | `fetch.sh` and the AOSP manifest of build 16373615 |
 | `tools/` | `check-license.sh` (license check) and `fetch-sources.sh` |
 
 ## Status

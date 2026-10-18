@@ -15,10 +15,13 @@
 bionic             aosp     platform/bionic                 manifest  -
 libbase            aosp     platform/system/libbase         manifest  -
 logging            aosp     platform/system/logging         manifest  -
-system-core        aosp     platform/system/core            manifest  init,libcutils,libutils,libprocessgroup,libsystem,libsysutils,property_service,rootdir,toolbox,debuggerd,include
+system-core        aosp     platform/system/core            manifest  init,libcutils,libutils,libprocessgroup,libsystem,libsysutils,property_service,rootdir,toolbox,debuggerd,include,run-as,libpackagelistparser
 libprocinfo        aosp     platform/system/libprocinfo     manifest  -
+libmeminfo         aosp     platform/system/memory/libmeminfo  manifest  libelfutils
 frameworks-native  aosp     platform/frameworks/native      manifest  libs/binder,cmds/servicemanager,include,libs/ui,libs/gui,services/surfaceflinger
 libnativehelper    aosp     platform/libnativehelper        manifest  -
+mksh               aosp     platform/external/mksh          manifest  -
+icu                aosp     platform/external/icu           manifest  icu4c/source/common,icu4c/source/i18n,icu4c/source/stubdata,libandroidicuinit,android_icu4c
 art                aosp     platform/art                    manifest  runtime,libartbase,libartpalette,libdexfile,dalvikvm,sigchainlib,libnativebridge,libnativeloader,dex2oat,libelffile,cmdline,build
 
 # --- FreeBSD (kernel + native C runtime the port targets) -----------------------

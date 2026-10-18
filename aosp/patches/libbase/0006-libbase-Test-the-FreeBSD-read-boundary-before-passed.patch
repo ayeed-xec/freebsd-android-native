@@ -1,0 +1,43 @@
+From 357267a2658d7e8223fd5514843b000eb8e4213b Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 12:50:16 +0000
+Subject: [PATCH 6/6] libbase: Test the FreeBSD read boundary before passed
+ descriptors
+
+CmsgTest.stream_fd_association writes "a", then "bc" with a descriptor,
+and expects one read(2) of 2 bytes to return "ab".  A FreeBSD read on a
+stream socket stops before data that carries descriptors, so it returns
+"a" only; POSIX allows a short read on a stream socket.  The rest of the
+test is the same on FreeBSD: the descriptor goes with "b", a read without
+a control buffer drops it, "c" comes with no descriptor and "d" with the
+second one.
+
+- cmsg_test.cpp: on FreeBSD, read "a" and "b" with two reads.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ cmsg_test.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/cmsg_test.cpp b/cmsg_test.cpp
+index 9ee5c82..6549a3c 100644
+--- a/cmsg_test.cpp
++++ b/cmsg_test.cpp
+@@ -133,7 +133,13 @@ TEST_P(CmsgTest, stream_fd_association) {
+   ASSERT_EQ(2, SendFileDescriptors(send.get(), "bc", 2, fd1.get()));
+   ASSERT_EQ(1, SendFileDescriptors(send.get(), "d", 1, fd2.get()));
+   char buf[2];
++#if defined(__FreeBSD__)
++  // A FreeBSD read stops before data that carries descriptors.
++  ASSERT_EQ(1, TEMP_FAILURE_RETRY(read(recv.get(), buf, 2)));
++  ASSERT_EQ(1, TEMP_FAILURE_RETRY(read(recv.get(), buf + 1, 1)));
++#else
+   ASSERT_EQ(2, TEMP_FAILURE_RETRY(read(recv.get(), buf, 2)));
++#endif
+   ASSERT_EQ(0, memcmp(buf, "ab", 2));
+ 
+   std::vector<unique_fd> received1;
+-- 
+2.56.0
+

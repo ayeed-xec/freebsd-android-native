@@ -1,0 +1,58 @@
+From 9091bc590798c818bce4df5ed72e32df99c38a64 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 20:10:04 +0000
+Subject: [PATCH] liblog: Make log_time(clockid_t) on FreeBSD too
+
+log_time has its clockid_t constructor only on Linux.  On FreeBSD,
+log_time(CLOCK_MONOTONIC) then compiles as log_time(uint32_t sec) and
+gives 4 seconds, because CLOCK_MONOTONIC is 4 there.  Callers get a
+wrong time and no error: the liblog test
+__android_log_btwrite__android_logger_list_read writes two equal times
+and never finds its second event.  Make the constructor, and the
+strptime() code that uses it, on FreeBSD too.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item R9).
+---
+ liblog/include/log/log_time.h | 2 +-
+ liblog/log_time.cpp           | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/liblog/include/log/log_time.h b/liblog/include/log/log_time.h
+index f50764d..9721916 100644
+--- a/liblog/include/log/log_time.h
++++ b/liblog/include/log/log_time.h
+@@ -45,7 +45,7 @@ struct log_time {
+   explicit log_time(uint32_t sec, uint32_t nsec = 0)
+       : tv_sec(sec), tv_nsec(nsec) {
+   }
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   explicit log_time(clockid_t id) {
+     timespec T;
+     clock_gettime(id, &T);
+diff --git a/liblog/log_time.cpp b/liblog/log_time.cpp
+index e96a513..2a5646a 100644
+--- a/liblog/log_time.cpp
++++ b/liblog/log_time.cpp
+@@ -26,7 +26,7 @@
+ // Add %#q for fractional seconds to standard strptime function
+ char* log_time::strptime(const char* s, const char* format) {
+   time_t now;
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   *this = log_time(CLOCK_REALTIME);
+   now = tv_sec;
+ #else
+@@ -111,7 +111,7 @@ char* log_time::strptime(const char* s, const char* format) {
+   }
+ 
+ // Upon error, place a known value into the class, the current time.
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   *this = log_time(CLOCK_REALTIME);
+ #else
+   time(&now);
+-- 
+2.56.0
+

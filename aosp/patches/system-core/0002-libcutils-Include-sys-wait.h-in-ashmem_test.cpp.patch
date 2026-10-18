@@ -1,0 +1,31 @@
+From 92e253cbe134eb3a53026b338be26cc9f004c0ed Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 19:14:17 +0000
+Subject: [PATCH] libcutils: Include <sys/wait.h> in ashmem_test.cpp
+
+ashmem_test.cpp calls waitpid(), but gets its declaration only through
+gtest, which includes <sys/wait.h> on Linux only.  On FreeBSD, gtest
+does not include it, and the test does not build.  Include the header
+that declares the function.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item K2).
+---
+ libcutils/ashmem_test.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libcutils/ashmem_test.cpp b/libcutils/ashmem_test.cpp
+index 2332ebe..91563f2 100644
+--- a/libcutils/ashmem_test.cpp
++++ b/libcutils/ashmem_test.cpp
+@@ -20,6 +20,7 @@
+ #include <string.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <sys/wait.h>
+ #include <unistd.h>
+ 
+ #include <vector>
+-- 
+2.56.0
+

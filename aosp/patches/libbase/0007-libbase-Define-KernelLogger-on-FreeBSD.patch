@@ -1,0 +1,42 @@
+From be6dfef2188401b6d1bcef06adf9a37cc76e2198 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 19:50:07 +0000
+Subject: [PATCH] libbase: Define KernelLogger on FreeBSD
+
+KernelLogger is declared on all targets but defined only on Linux, so
+logd, which logs with it, does not link on FreeBSD.  Define it on
+FreeBSD too.  It writes to /dev/kmsg when that device exists; FreeBSD
+has none, so the messages are dropped, as on a Linux system without
+/dev/kmsg.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item R9).
+---
+ logging.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/logging.cpp b/logging.cpp
+index b4a4688..81b7e83 100644
+--- a/logging.cpp
++++ b/logging.cpp
+@@ -97,7 +97,7 @@ static const char* GetFileBasename(const char* file) {
+   return file;
+ }
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__FreeBSD__)
+ static int OpenKmsg() {
+ #if defined(__ANDROID__)
+   // Pick up `file /dev/kmsg w` environment from a daemon's init .rc file.
+@@ -212,7 +212,7 @@ void SetDefaultTag(const std::string& tag) {
+ 
+ static bool gInitialized = false;
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__FreeBSD__)
+ static void KernelLogLine(const char* msg, int length, android::base::LogSeverity severity,
+                           const char* tag) {
+   // clang-format off
+-- 
+2.56.0
+

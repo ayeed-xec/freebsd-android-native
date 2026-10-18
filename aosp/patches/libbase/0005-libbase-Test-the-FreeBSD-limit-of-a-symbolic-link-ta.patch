@@ -1,0 +1,46 @@
+From 4011b617e44faf0fe15d0711e1f449ad422803cd Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 12:47:06 +0000
+Subject: [PATCH 5/6] libbase: Test the FreeBSD limit of a symbolic link target
+
+file.Readlink makes a symbolic link with a target of 4092 bytes, the
+limit of ext4.  POSIX leaves the limit to the system ({SYMLINK_MAX}), and
+FreeBSD takes at most PATH_MAX - 1 bytes (1023); a longer target gives
+ENAMETOOLONG.
+
+- file_test.cpp: on FreeBSD, test a target of PATH_MAX - 1 bytes.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ file_test.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/file_test.cpp b/file_test.cpp
+index 2474f7b..439df92 100644
+--- a/file_test.cpp
++++ b/file_test.cpp
+@@ -22,6 +22,7 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <limits.h>
+ #include <unistd.h>
+ #include <wchar.h>
+ 
+@@ -290,7 +291,12 @@ TEST(file, Readlink) {
+   // size of the encrypted symlink target. There's also an off-by-one
+   // in current kernels (and marlin/sailfish where we're seeing this
+   // failure are still on 3.18, far from current). http://b/33306057.
++#if defined(__FreeBSD__)
++  // FreeBSD takes a symbolic link target of at most PATH_MAX - 1 bytes.
++  std::string max(static_cast<size_t>(PATH_MAX - 1), 'x');
++#else
+   std::string max(static_cast<size_t>(4096 - 2 - 1 - 1), 'x');
++#endif
+ 
+   TemporaryDir td;
+   std::string min_path{std::string(td.path) + "/" + "min"};
+-- 
+2.56.0
+

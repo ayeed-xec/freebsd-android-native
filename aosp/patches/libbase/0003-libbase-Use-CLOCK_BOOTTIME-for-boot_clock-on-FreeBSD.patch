@@ -1,0 +1,43 @@
+From 3f2c57103279abc3a27d196443c6aaf221179bfc Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 12:21:35 +0000
+Subject: [PATCH 3/6] libbase: Use CLOCK_BOOTTIME for boot_clock on FreeBSD
+
+boot_clock::now() reads CLOCK_BOOTTIME only on Linux.  On other systems
+it returns the epoch, so each Timer shows 0 ms and boot_clock does not
+move.  FreeBSD has clock_gettime(2), and both its libc and bionic on the
+FreeBSD kernel define CLOCK_BOOTTIME (as CLOCK_MONOTONIC).
+
+- chrono_utils.cpp: read CLOCK_BOOTTIME on FreeBSD too.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ chrono_utils.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/chrono_utils.cpp b/chrono_utils.cpp
+index 19080a5..bdab3fc 100644
+--- a/chrono_utils.cpp
++++ b/chrono_utils.cpp
+@@ -22,7 +22,7 @@ namespace android {
+ namespace base {
+ 
+ boot_clock::time_point boot_clock::now() {
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   timespec ts;
+   clock_gettime(CLOCK_BOOTTIME, &ts);
+   return boot_clock::time_point(std::chrono::seconds(ts.tv_sec) +
+@@ -30,7 +30,7 @@ boot_clock::time_point boot_clock::now() {
+ #else
+   // Darwin and Windows do not support clock_gettime.
+   return boot_clock::time_point();
+-#endif  // __linux__
++#endif  // __linux__ || __FreeBSD__
+ }
+ 
+ std::ostream& operator<<(std::ostream& os, const Timer& t) {
+-- 
+2.56.0
+

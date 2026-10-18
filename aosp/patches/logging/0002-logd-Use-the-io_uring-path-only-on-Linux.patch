@@ -1,0 +1,111 @@
+From 9f240258cc54ce3a9ccf4c7dfcfeb0f6841d6cb8 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 19:50:07 +0000
+Subject: [PATCH 2/3] logd: Use the io_uring path only on Linux
+
+io_uring is a Linux interface.  On other kernels, LogListener does not
+include IOUringSocketHandler or the aconfig flags, and always uses the
+synchronous receive path, which is the path of a Linux device with the
+use_iouring flag off.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item R9).
+---
+ logd/LogListener.cpp | 15 ++++++++++++++-
+ logd/LogListener.h   |  6 +++++-
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/logd/LogListener.cpp b/logd/LogListener.cpp
+index b7a8e6b..eb6e420 100644
+--- a/logd/LogListener.cpp
++++ b/logd/LogListener.cpp
+@@ -30,9 +30,11 @@
+ 
+ #include <log/pmsg_writer.h>
+ 
+-#include <IOUringSocketHandler/IOUringSocketHandler.h>
+ #include <android-base/logging.h>
++#if defined(__linux__)
++#include <IOUringSocketHandler/IOUringSocketHandler.h>
+ #include <android_logd_flags.h>
++#endif
+ 
+ #include "LogBuffer.h"
+ #include "LogListener.h"
+@@ -49,6 +51,7 @@ bool LogListener::StartListener() {
+     return true;
+ }
+ 
++#if defined(__linux__)
+ bool LogListener::InitializeUring() {
+     if (!IOUringSocketHandler::IsIouringSupported()) {
+         return false;
+@@ -73,10 +76,12 @@ bool LogListener::InitializeUring() {
+     uring_listener_ = std::move(temp_listener);
+     return true;
+ }
++#endif
+ 
+ void LogListener::ThreadFunction() {
+     prctl(PR_SET_NAME, "logd.writer");
+ 
++#if defined(__linux__)
+     const bool use_uring_ = android::logd::flags::use_iouring() && InitializeUring();
+ 
+     while (true) {
+@@ -86,8 +91,15 @@ void LogListener::ThreadFunction() {
+             HandleDataSync();
+         }
+     }
++#else
++    // io_uring is a Linux interface: other kernels use the synchronous path.
++    while (true) {
++        HandleDataSync();
++    }
++#endif
+ }
+ 
++#if defined(__linux__)
+ void LogListener::HandleDataUring() {
+     void* payload = nullptr;
+     size_t payload_len = 0;
+@@ -99,6 +111,7 @@ void LogListener::HandleDataUring() {
+     }
+     uring_listener_->ReleaseBuffer();
+ }
++#endif
+ 
+ void LogListener::HandleDataSync() {
+     // + 1 to ensure null terminator if MAX_PAYLOAD buffer is received
+diff --git a/logd/LogListener.h b/logd/LogListener.h
+index e68f4ed..22b145a 100644
+--- a/logd/LogListener.h
++++ b/logd/LogListener.h
+@@ -16,7 +16,9 @@
+ 
+ #pragma once
+ 
++#if defined(__linux__)
+ #include <IOUringSocketHandler/IOUringSocketHandler.h>
++#endif
+ 
+ #include "LogBuffer.h"
+ 
+@@ -28,11 +30,13 @@ class LogListener {
+   private:
+     void ThreadFunction();
+     static int GetLogSocket();
+-    void HandleDataUring();
+     void HandleDataSync();
+     void ProcessBuffer(struct ucred* cred, void* buffer, ssize_t n);
++#if defined(__linux__)
++    void HandleDataUring();
+     bool InitializeUring();
+     std::unique_ptr<IOUringSocketHandler> uring_listener_;
++#endif
+     int socket_;
+     LogBuffer* logbuf_;
+ };
+-- 
+2.56.0
+

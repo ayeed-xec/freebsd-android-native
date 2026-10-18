@@ -1,0 +1,68 @@
+From 28f4676c0592b0a7c4ae2f115552ccdeaf8bf014 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 20:28:20 +0000
+Subject: [PATCH] libcap: Use capset() and prctl() where the system has no such
+ call numbers
+
+cap_proc.c calls SYS_capset and SYS_prctl through the syscall override
+of cap_set_syscall().  Bionic on FreeBSD has neither call number: its
+libc maps capset() and prctl() to FreeBSD calls.  Compile the override
+path only when the numbers exist; otherwise libcap calls the libc
+functions, as it does without an override.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item R9).
+---
+ libcap/cap_proc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/libcap/cap_proc.c b/libcap/cap_proc.c
+index 24bc274..fcee3ee 100644
+--- a/libcap/cap_proc.c
++++ b/libcap/cap_proc.c
+@@ -125,15 +125,18 @@ void cap_set_syscall(long int (*new_syscall)(long int,
+ static int _libcap_capset(struct syscaller_s *sc,
+ 			  cap_user_header_t header, const cap_user_data_t data)
+ {
++#ifdef SYS_capset
+     if (_libcap_overrode_syscalls) {
+ 	return sc->three(SYS_capset, (long int) header, (long int) data, 0);
+     }
++#endif
+     return capset(header, data);
+ }
+ 
+ static int _libcap_wprctl3(struct syscaller_s *sc,
+ 			   long int pr_cmd, long int arg1, long int arg2)
+ {
++#ifdef SYS_prctl
+     if (_libcap_overrode_syscalls) {
+ 	int result;
+ 	result = sc->three(SYS_prctl, pr_cmd, arg1, arg2);
+@@ -143,6 +146,7 @@ static int _libcap_wprctl3(struct syscaller_s *sc,
+ 	errno = -result;
+ 	return -1;
+     }
++#endif
+     return prctl(pr_cmd, arg1, arg2, 0, 0, 0);
+ }
+ 
+@@ -150,6 +154,7 @@ static int _libcap_wprctl6(struct syscaller_s *sc,
+ 			   long int pr_cmd, long int arg1, long int arg2,
+ 			   long int arg3, long int arg4, long int arg5)
+ {
++#ifdef SYS_prctl
+     if (_libcap_overrode_syscalls) {
+ 	int result;
+ 	result = sc->six(SYS_prctl, pr_cmd, arg1, arg2, arg3, arg4, arg5);
+@@ -159,6 +164,7 @@ static int _libcap_wprctl6(struct syscaller_s *sc,
+ 	errno = -result;
+ 	return -1;
+     }
++#endif
+     return prctl(pr_cmd, arg1, arg2, arg3, arg4, arg5);
+ }
+ 
+-- 
+2.56.0
+

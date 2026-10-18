@@ -1,0 +1,39 @@
+From f26d555c23a6fc3bbb3143d871a701ef73366d87 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 12:47:48 +0000
+Subject: [PATCH] liblog: Test the FreeBSD error for a closed datagram peer
+
+multi_connect_dgram_socket closes the server socket and expects the next
+write() of the connected AF_UNIX datagram client to fail with
+ECONNREFUSED, the Linux error.  POSIX leaves the error to the system, and
+FreeBSD gives ECONNRESET (then EDESTADDRREQ, as the socket is no longer
+connected).  liblog itself reconnects after any error but EAGAIN.
+
+- liblog/tests/logd_writer_test.cpp: on FreeBSD, expect ECONNRESET.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ liblog/tests/logd_writer_test.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/liblog/tests/logd_writer_test.cpp b/liblog/tests/logd_writer_test.cpp
+index b8e4726..71efae0 100644
+--- a/liblog/tests/logd_writer_test.cpp
++++ b/liblog/tests/logd_writer_test.cpp
+@@ -78,7 +78,12 @@ TEST(liblog, multi_connect_dgram_socket) {
+ 
+   // Ensure that write() from the client returns an error since the server is closed.
+   ASSERT_EQ(-1, TEMP_FAILURE_RETRY(write(client_socket, kSmoke, sizeof(kSmoke))));
++#if defined(__FreeBSD__)
++  // FreeBSD reports the closed datagram peer once, as ECONNRESET.
++  ASSERT_EQ(errno, ECONNRESET) << strerror(errno);
++#else
+   ASSERT_EQ(errno, ECONNREFUSED) << strerror(errno);
++#endif
+ 
+   // Open the server socket again.
+   open_server_socket();
+-- 
+2.56.0
+

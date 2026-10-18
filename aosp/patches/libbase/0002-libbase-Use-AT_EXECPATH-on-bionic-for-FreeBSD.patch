@@ -1,0 +1,63 @@
+From fcaabacb9e71cb7ecf76d241d99a0a6291a4ec8a Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 04:49:00 +0000
+Subject: [PATCH 2/2] libbase: Use AT_EXECPATH on bionic for FreeBSD
+
+bionic on the FreeBSD kernel defines __FreeBSD__ and __BIONIC__.  It has
+no sysctl(3) API and no <pthread_np.h>.  The FreeBSD paths of the
+previous patch are for the FreeBSD libc, so bionic gets its own path.
+
+- file.cpp: GetExecutablePath() reads AT_EXECPATH with getauxval(3).
+  The kernel gives the path of the executable there.
+- threads.cpp: include <pthread_np.h> only without bionic.
+  GetThreadId() already uses gettid() on bionic.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ file.cpp    | 8 +++++++-
+ threads.cpp | 2 +-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/file.cpp b/file.cpp
+index 6338241..ae004e7 100644
+--- a/file.cpp
++++ b/file.cpp
+@@ -33,7 +33,9 @@
+ #include <string>
+ #include <vector>
+ 
+-#if defined(__FreeBSD__)
++#if defined(__FreeBSD__) && defined(__BIONIC__)
++#include <sys/auxv.h>
++#elif defined(__FreeBSD__)
+ #include <sys/sysctl.h>
+ #endif
+ #if defined(__APPLE__)
+@@ -515,6 +517,10 @@ std::string GetExecutablePath() {
+   if (result == 0 || result == sizeof(path) - 1) return "";
+   path[PATH_MAX - 1] = 0;
+   return path;
++#elif defined(__FreeBSD__) && defined(__BIONIC__)
++  // bionic has no sysctl(3) API: the kernel gives the path in AT_EXECPATH.
++  const char* path = reinterpret_cast<const char*>(getauxval(AT_EXECPATH));
++  return path != nullptr ? path : "";
+ #elif defined(__FreeBSD__)
+   int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1};
+   char path[PATH_MAX];
+diff --git a/threads.cpp b/threads.cpp
+index 951605b..9106efe 100644
+--- a/threads.cpp
++++ b/threads.cpp
+@@ -23,7 +23,7 @@
+ #include <pthread.h>
+ #elif defined(__linux__) && !defined(__ANDROID__)
+ #include <syscall.h>
+-#elif defined(__FreeBSD__)
++#elif defined(__FreeBSD__) && !defined(__BIONIC__)
+ #include <pthread_np.h>
+ #elif defined(_WIN32)
+ #include <windows.h>
+-- 
+2.56.0
+

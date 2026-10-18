@@ -1,0 +1,54 @@
+From 65edd8a3f6b294768764ca9a64923888c2e58026 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 12:47:06 +0000
+Subject: [PATCH 4/6] libbase: Use MSG_CMSG_CLOEXEC and MSG_NOSIGNAL on FreeBSD
+
+SendFileDescriptorVector() and ReceiveFileDescriptorVector() use
+MSG_NOSIGNAL and MSG_CMSG_CLOEXEC only on Linux.  Elsewhere the receiver
+sets FD_CLOEXEC on each descriptor after recvmsg(), so a fork() in another
+thread can leak the descriptors.  FreeBSD has both flags.
+
+- cmsg.cpp: use the flags on FreeBSD too.
+
+The project freebsd-android-native carries this patch (ADR 0002,
+decision 1.7).
+---
+ cmsg.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/cmsg.cpp b/cmsg.cpp
+index 5a137c3..d9a3126 100644
+--- a/cmsg.cpp
++++ b/cmsg.cpp
+@@ -62,7 +62,7 @@ ssize_t SendFileDescriptorVector(borrowed_fd sockfd, const void* data, size_t le
+     cmsg_fds[i] = fds[i];
+   }
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__FreeBSD__)
+   int flags = MSG_NOSIGNAL;
+ #else
+   int flags = 0;
+@@ -96,7 +96,7 @@ ssize_t ReceiveFileDescriptorVector(borrowed_fd sockfd, void* data, size_t len,
+   };
+ 
+   int flags = MSG_TRUNC | MSG_CTRUNC;
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__FreeBSD__)
+   flags |= MSG_CMSG_CLOEXEC | MSG_NOSIGNAL;
+ #endif
+ 
+@@ -147,8 +147,8 @@ ssize_t ReceiveFileDescriptorVector(borrowed_fd sockfd, void* data, size_t len,
+     int* cmsg_fds = reinterpret_cast<int*>(CMSG_DATA(cmsg));
+     size_t cmsg_fdcount = static_cast<size_t>(cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+     for (size_t i = 0; i < cmsg_fdcount; ++i) {
+-#if !defined(__linux__)
+-      // Linux uses MSG_CMSG_CLOEXEC instead of doing this manually.
++#if !defined(__linux__) && !defined(__FreeBSD__)
++      // Linux and FreeBSD use MSG_CMSG_CLOEXEC instead of doing this manually.
+       fcntl(cmsg_fds[i], F_SETFD, FD_CLOEXEC);
+ #endif
+       received_fds.emplace_back(cmsg_fds[i]);
+-- 
+2.56.0
+

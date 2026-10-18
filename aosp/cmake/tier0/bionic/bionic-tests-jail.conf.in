@@ -1,0 +1,118 @@
+#
+# Copyright (c) 2026 Ayeed Shaikh <Ayeed.AI10@race.reva.edu.in>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+# jail.conf(5) for the bionic_unit_tests ctest entry; tests.cmake fills in
+# the paths.  The root is the Android root.  The runtime and i18n APEXes
+# and /system come read-only from this build, tzdata from the host, and
+# /bin is a symbolic link to /system/bin, as on Android.  The build tree
+# appears at its own path, so DT_RUNPATH and BIN_DIR are the same as outside
+# the jail.
+# The exec tests run echo, printenv and sh from BIN_DIR, which has copies
+# of the FreeBSD programs, so /lib and /libexec are there read-only too.
+#
+# devfs cannot hold a directory that a program makes, so /dev/__properties__
+# and /dev/socket are devfs symbolic links into a tmpfs at /mnt/dev.  The
+# devfs ruleset hides new entries, so a rule unhides the two links.  As init
+# does on a device, propd makes the property area there and serves
+# /dev/socket/property_service until the jail goes away.  /proc and /sys are
+# aprocfs(4) and asysfs(4), the Linux layout that Android reads, so the
+# host modules aprocfs.ko and asysfs.ko must be loaded.  As on Android,
+# /dev/stdin, /dev/stdout and /dev/stderr link to /proc/self/fd: a rule
+# hides the devfs links to fd/0, fd/1 and fd/2, and new links replace them.
+#
+# After propd, svcstart starts logd with the lines of logd.rc: the sockets
+# logd, logdr and logdw in /dev/socket, the logd user and groups, and
+# priority 10.  As logd.rc does, /dev/event-log-tags is a file that logd
+# owns; it is a devfs link to /mnt/dev, as /dev/socket is.  /etc links to
+# /system/etc, as on Android.
+#
+# /data is a directory of the Android root, not a tmpfs: as on a device it
+# is a disk file system, and linker64 does not check the namespace of a
+# library on tmpfs.  At each start /data, /data/local and /data/local/tmp
+# get the owners and modes that init gives them.  The test runner then
+# gives /data/local/tmp to the user that runs the tests, who has the part
+# of the shell user.
+
+bionic_tests {
+	path = "@ANDROID_JAIL_ROOT@";
+	host.hostname = "localhost";
+	ip4 = disable;
+	ip6 = disable;
+	persist;
+	exec.prepare = "mkdir -p $path/apex/com.android.i18n \
+	    $path/apex/com.android.runtime $path/apex/com.android.tzdata \
+	    $path/system $path/dev $path/lib $path/libexec $path/mnt/dev \
+	    $path/proc $path/sys $path/tmp $path@GEN@";
+	# An older root has an empty directory here, which -F replaces.
+	exec.prepare += "ln -sFh /system/bin $path/bin";
+	exec.prepare += "ln -sFh /system/etc $path/etc";
+	exec.prepare += "install -d -o 1000 -g 1000 -m 0771 $path/data";
+	exec.prepare += "install -d -o 0 -g 0 -m 0751 $path/data/local";
+	exec.prepare += "install -d -o 0 -g 0 -m 0771 $path/data/local/tmp";
+	mount.devfs;
+	mount = "@GEN@/android-root/apex/com.android.runtime \
+	    $path/apex/com.android.runtime nullfs ro 0 0";
+	mount += "@GEN@/android-root/apex/com.android.i18n \
+	    $path/apex/com.android.i18n nullfs ro 0 0";
+	mount += "/apex/com.android.tzdata $path/apex/com.android.tzdata \
+	    nullfs ro 0 0";
+	mount += "@GEN@/android-root/system $path/system nullfs ro 0 0";
+	mount += "/lib $path/lib nullfs ro 0 0";
+	mount += "/libexec $path/libexec nullfs ro 0 0";
+	mount += "@GEN@ $path@GEN@ nullfs rw 0 0";
+	mount += "tmpfs $path/tmp tmpfs rw,mode=1777 0 0";
+	mount += "tmpfs $path/mnt/dev tmpfs \
+	    rw,mode=0755,uid=0,gid=0,size=1m 0 0";
+	mount += "aprocfs $path/proc aprocfs rw 0 0";
+	mount += "asysfs $path/sys asysfs ro 0 0";
+	exec.prestart = "mkdir -m 0711 $path/mnt/dev/__properties__";
+	exec.prestart += "mkdir -m 0755 $path/mnt/dev/socket";
+	exec.prestart += "ln -s /mnt/dev/__properties__ \
+	    $path/dev/__properties__";
+	exec.prestart += "ln -s /mnt/dev/socket $path/dev/socket";
+	exec.prestart += "devfs -m $path/dev rule apply path __properties__ \
+	    unhide";
+	exec.prestart += "devfs -m $path/dev rule apply path socket unhide";
+	exec.prestart += "devfs -m $path/dev rule apply path stdin hide";
+	exec.prestart += "devfs -m $path/dev rule apply path stdout hide";
+	exec.prestart += "devfs -m $path/dev rule apply path stderr hide";
+	exec.prestart += "ln -s /proc/self/fd/0 $path/dev/stdin";
+	exec.prestart += "ln -s /proc/self/fd/1 $path/dev/stdout";
+	exec.prestart += "ln -s /proc/self/fd/2 $path/dev/stderr";
+	exec.prestart += "printf '# content owned by logd\\n' > \
+	    $path/mnt/dev/event-log-tags";
+	exec.prestart += "chown 1036:1036 $path/mnt/dev/event-log-tags";
+	exec.prestart += "chmod 0644 $path/mnt/dev/event-log-tags";
+	exec.prestart += "ln -s /mnt/dev/event-log-tags \
+	    $path/dev/event-log-tags";
+	exec.prestart += "devfs -m $path/dev rule apply path event-log-tags \
+	    unhide";
+	exec.start = "@GEN@/propd @GEN@/property_contexts";
+	exec.start += "@GEN@/svcstart -s logd:stream:0666:1036:1036 \
+	    -s logdr:seqpacket:0666:1036:1036 \
+	    -s logdw:dgram+passcred:0222:1036:1036 -g 1036,1000,1032,3009 \
+	    -p 10 -u 1036 /system/bin/logd";
+}

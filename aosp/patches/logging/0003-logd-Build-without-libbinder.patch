@@ -1,0 +1,129 @@
+From 2b77963f61f13153a038d453cf889a37ece469ca Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 19:50:07 +0000
+Subject: [PATCH 3/3] logd: Build without libbinder
+
+A build that defines LOGD_NO_BINDER has no libbinder.  logd then has no
+logd binder service and no logcat service, and it takes the branches
+that it takes when these services are not available: a reader that
+needs the user consent loses its privileges.  Native readers do not
+need the consent and do not change.
+
+The project freebsd-android-native carries this patch until libbinder
+is built (ADR 0004, item R9).
+---
+ logd/LogReader.cpp     | 13 +++++++++++++
+ logd/LogReaderList.cpp | 11 +++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/logd/LogReader.cpp b/logd/LogReader.cpp
+index de0e64a..66acfe0 100644
+--- a/logd/LogReader.cpp
++++ b/logd/LogReader.cpp
+@@ -26,13 +26,17 @@
+ 
+ #include <android-base/logging.h>
+ #include <android-base/stringprintf.h>
++#if !defined(LOGD_NO_BINDER)
+ #include <binder/IServiceManager.h>
+ #include <binder/ProcessState.h>
++#endif
+ #include <cutils/sockets.h>
+ #include <private/android_filesystem_config.h>
+ #include <private/android_logger.h>
+ 
++#if !defined(LOGD_NO_BINDER)
+ #include "LogdNativeService.h"
++#endif
+ #include "LogBuffer.h"
+ #include "LogBufferElement.h"
+ #include "LogPermissions.h"
+@@ -40,10 +44,12 @@
+ #include "LogUtils.h"
+ #include "LogWriter.h"
+ 
++#if !defined(LOGD_NO_BINDER)
+ using android::defaultServiceManager;
+ using android::ProcessState;
+ using android::sp;
+ using android::String16;
++#endif
+ 
+ static bool CanReadSecurityLogs(SocketClient* client) {
+     return client->getUid() == AID_SYSTEM || client->getGid() == AID_SYSTEM;
+@@ -53,6 +59,12 @@ static std::string SocketClientToName(SocketClient* client) {
+     return android::base::StringPrintf("pid %d, fd %d", client->getPid(), client->getSocket());
+ }
+ 
++#if defined(LOGD_NO_BINDER)
++// A build without libbinder has no logd binder service.
++static bool GetLogdBinderServiceStatus(LogReaderList*) {
++    return false;
++}
++#else
+ static bool InitLogdBinderServiceStatus(LogReaderList* reader_list) {
+     sp<LogdNativeService> service = new LogdNativeService(reader_list);
+     auto service_status = defaultServiceManager()->addService(String16("logd"), service);
+@@ -70,6 +82,7 @@ static bool GetLogdBinderServiceStatus(LogReaderList* reader_list) {
+     static bool service_status = InitLogdBinderServiceStatus(reader_list);
+     return service_status;
+ }
++#endif
+ 
+ class SocketLogWriter : public LogWriter {
+   public:
+diff --git a/logd/LogReaderList.cpp b/logd/LogReaderList.cpp
+index c31aa27..45ea38f 100644
+--- a/logd/LogReaderList.cpp
++++ b/logd/LogReaderList.cpp
+@@ -17,6 +17,7 @@
+ #include "LogReaderList.h"
+ 
+ #include <android-base/logging.h>
++#if !defined(LOGD_NO_BINDER)
+ #include <android/os/logcat/ILogcatManagerService.h>
+ #include <binder/IServiceManager.h>
+ 
+@@ -38,6 +39,7 @@ static sp<ILogcatManagerService> GetLogcatService() {
+     }
+     return logcat_service;
+ }
++#endif
+ 
+ // When we are notified a new log entry is available, inform
+ // listening sockets who are watching this entry's log id.
+@@ -101,15 +103,23 @@ void LogReaderList::RemoveRunningThread(LogReaderThread* thread) {
+         return;
+     }
+ 
++#if !defined(LOGD_NO_BINDER)
+     auto service = GetLogcatService();
+     if (service != nullptr) {
+         const PendingReaderThreadKey key = thread->pending_reader_thread_key();
+         service->finishThread(key.uid, key.gid, key.pid, key.fd);
+     }
++#endif
+     running_reader_threads_.erase(iter);
+ }
+ 
+ void LogReaderList::AddPendingThread(std::unique_ptr<LogReaderThread> thread) {
++#if defined(LOGD_NO_BINDER)
++    // A build without libbinder has no logcat service, so it cannot check
++    // the user consent either. So we revoke the privileges.
++    thread->Revoke();
++    AddAndRunThread(std::move(thread));
++#else
+     auto service = GetLogcatService();
+ 
+     // If the logcat binder service is not available, we will be not able to
+@@ -123,6 +133,7 @@ void LogReaderList::AddPendingThread(std::unique_ptr<LogReaderThread> thread) {
+     const PendingReaderThreadKey key = thread->pending_reader_thread_key();
+     service->startThread(key.uid, key.gid, key.pid, key.fd);
+     pending_reader_threads_.emplace_back(std::move(thread));
++#endif
+ }
+ 
+ bool LogReaderList::ReleaseThreadByName(const std::string& cli_name) REQUIRES(logd_lock) {
+-- 
+2.56.0
+

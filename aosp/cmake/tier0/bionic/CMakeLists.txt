@@ -47,8 +47,8 @@ set(BIONIC_SRC "/home/dev/aosp/platform_bionic" CACHE PATH
     "bionic-freebsd checkout (branch freebsd)")
 set(AOSP_SYSTEM "/home/dev/aosp/system" CACHE PATH
     "AOSP system/ checkout (core, logging) at the pinned build")
-set(SYSCALLS_MASTER "/usr/src/sys/kern/syscalls.master" CACHE FILEPATH
-    "syscalls.master of the pinned FreeBSD tree")
+set(SYSCALLS_MASTER "${BIONIC_SRC}/libc/kernel/freebsd/syscalls.master"
+    CACHE FILEPATH "syscalls.master of the freebsd-src fork")
 set(HOST_CC cc CACHE STRING "FreeBSD compiler for abi_probe")
 set(PLATFORM_SDK_VERSION 37 CACHE STRING "Android API level")
 set(BUILTINS_LIB "" CACHE FILEPATH
@@ -62,19 +62,20 @@ set(AOSP_EXTERNAL "/home/dev/aosp/external" CACHE PATH
 set(BIONIC_ALLOCATOR "jemalloc5" CACHE STRING
     "Allocator of libc: jemalloc5 or tier0")
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_program(AWK awk REQUIRED)
 
-set(POC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
-set(PARITY "${POC_ROOT}/tools/parity")
+set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
+set(PARITY "${PROJECT_ROOT}/tools/parity")
 set(LIBC "${BIONIC_SRC}/libc")
 set(GEN "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROPINFO "${AOSP_SYSTEM}/core/property_service/libpropertyinfoparser")
 
-# Android code sees the bionic-freebsd headers only, never /usr/include.
-# -O2 and the sections flags are bionic's global flags.
+# Android code sees the bionic-freebsd headers only, never /usr/include,
+# and the Linux-named headers of linux-compat after them.  -O2 and the
+# sections flags are bionic's global flags.
 add_compile_options(-nostdlibinc -O2 -ffunction-sections -fdata-sections
     -Wall -Werror)
-include_directories(SYSTEM "${LIBC}/include")
+include_directories(SYSTEM "${LIBC}/include" "${LIBC}/include/linux-compat")
 include_directories("${LIBC}")
 
 # libc_common_flags and libc_defaults of libc/Android.bp.  Android clang
@@ -105,10 +106,10 @@ endfunction()
 
 # System call stubs from SYSCALLS.FREEBSD.TXT.
 add_custom_command(OUTPUT "${GEN}/syscalls-arm64.S"
-    COMMAND "${Python3_EXECUTABLE}" "${PARITY}/parse_syscalls_master.py"
+    COMMAND "${AWK}" -f "${PARITY}/parse_syscalls_master.awk"
         stubs "${SYSCALLS_MASTER}" "${LIBC}/SYSCALLS.FREEBSD.TXT"
         > "${GEN}/syscalls-arm64.S"
-    DEPENDS "${PARITY}/parse_syscalls_master.py" "${SYSCALLS_MASTER}"
+    DEPENDS "${PARITY}/parse_syscalls_master.awk" "${SYSCALLS_MASTER}"
         "${LIBC}/SYSCALLS.FREEBSD.TXT"
     VERBATIM)
 
@@ -141,6 +142,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/__errno.cpp"
         "${LIBC}/bionic/__progname.cpp"
         "${LIBC}/bionic/abort.cpp"
+        "${LIBC}/bionic/accept.cpp"
         "${LIBC}/bionic/access.cpp"
         "${LIBC}/bionic/android_set_abort_message.cpp"
         "${LIBC}/bionic/assert.cpp"
@@ -154,33 +156,42 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/c32rtomb.cpp"
         "${LIBC}/bionic/casecmp.cpp"
         "${LIBC}/bionic/chmod.cpp"
+        "${LIBC}/bionic/chown.cpp"
         "${LIBC}/bionic/clock.cpp"
         "${LIBC}/bionic/clock_getcpuclockid.cpp"
         "${LIBC}/bionic/clock_nanosleep.cpp"
+        "${LIBC}/bionic/clone.cpp"
         "${LIBC}/bionic/dirent.cpp"
+        "${LIBC}/bionic/div.cpp"
         "${LIBC}/bionic/dup.cpp"
         "${LIBC}/bionic/elf_note.cpp"
         "${LIBC}/bionic/env.cpp"
         "${LIBC}/bionic/environ.cpp"
         "${LIBC}/bionic/err.cpp"
+        "${LIBC}/bionic/error.cpp"
+        "${LIBC}/bionic/eventfd.cpp"
         "${LIBC}/bionic/exit.cpp"
         "${LIBC}/bionic/fork.cpp"
         "${LIBC}/bionic/exec.cpp"
         "${LIBC}/bionic/fcntl.cpp"
         "${LIBC}/bionic/fdsan.cpp"
         "${LIBC}/bionic/fdtrack.cpp"
+        "${LIBC}/bionic/fpclassify.cpp"
         "${LIBC}/bionic/ftw.cpp"
         "${LIBC}/bionic/getcwd.cpp"
         "${LIBC}/bionic/getentropy.cpp"
         "${LIBC}/bionic/gethostname.cpp"
         "${LIBC}/bionic/getpagesize.cpp"
+        "${LIBC}/bionic/getpgrp.cpp"
         "${LIBC}/bionic/getpid.cpp"
         "${LIBC}/bionic/gettid.cpp"
         "${LIBC}/bionic/heap_tagging.cpp"
         "${LIBC}/bionic/heap_zero_init.cpp"
+        "${LIBC}/bionic/inotify_init.cpp"
         "${LIBC}/bionic/ioctl.cpp"
         "${LIBC}/bionic/isatty.cpp"
         "${LIBC}/bionic/killpg.cpp"
+        "${LIBC}/bionic/lchown.cpp"
         "${LIBC}/bionic/langinfo.cpp"
         "${LIBC}/bionic/libc_init_common.cpp"
         "${LIBC}/bionic/libgen.cpp"
@@ -190,12 +201,15 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/mbrtoc32.cpp"
         "${LIBC}/bionic/memset_explicit.cpp"
         "${LIBC}/bionic/mkdir.cpp"
+        "${LIBC}/bionic/mntent.cpp"
         "${LIBC}/bionic/new.cpp"
         "${LIBC}/bionic/NetdClientDispatch.cpp"
+        "${LIBC}/bionic/netinet_in.cpp"
         "${LIBC}/bionic/open.cpp"
         "${LIBC}/bionic/pathconf.cpp"
         "${LIBC}/bionic/pause.cpp"
         "${LIBC}/bionic/pipe.cpp"
+        "${LIBC}/bionic/posix_madvise.cpp"
         "${LIBC}/bionic/posix_timers.cpp"
         "${LIBC}/bionic/poll.cpp"
         "${LIBC}/bionic/pthread_atfork.cpp"
@@ -222,9 +236,11 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/pthread_setname_np.cpp"
         "${LIBC}/bionic/pthread_spinlock.cpp"
         "${LIBC}/bionic/pthread_sigqueue.cpp"
+        "${LIBC}/bionic/pty.cpp"
         "${LIBC}/bionic/raise.cpp"
         "${LIBC}/bionic/rand.cpp"
         "${LIBC}/bionic/readlink.cpp" "${LIBC}/bionic/recv.cpp"
+        "${LIBC}/bionic/recvmsg.cpp"
         "${LIBC}/bionic/rename.cpp"
         "${LIBC}/bionic/rmdir.cpp"
         "${LIBC}/bionic/sched_cpucount.cpp"
@@ -235,12 +251,15 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/signal.cpp"
         "${LIBC}/bionic/sleep.cpp"
         "${LIBC}/bionic/sigprocmask.cpp"
+        "${LIBC}/bionic/socketpair.cpp"
         "${LIBC}/bionic/stat.cpp"
         "${LIBC}/bionic/strerror.cpp"
         "${LIBC}/bionic/strsignal.cpp"
         "${LIBC}/bionic/strtod.cpp"
         "${LIBC}/bionic/strtold.cpp"
         "${LIBC}/bionic/swab.cpp"
+        "${LIBC}/bionic/symlink.cpp"
+        "${LIBC}/bionic/sys_epoll.cpp"
         "${LIBC}/bionic/sysconf.cpp"
         "${LIBC}/bionic/sysinfo.cpp"
         "${LIBC}/bionic/syslog.cpp"
@@ -271,6 +290,23 @@ libc_objects(libc_bionic
         "${LIBC}/system_properties/system_properties.cpp"
         "${PROPINFO}/property_info_parser.cpp")
 
+# getpwnam(3), getgrnam(3) and the other passwd and group functions: the
+# Android ids of libcutils, then the passwd and group files of the
+# partitions.  The table of ids is generated as Android's
+# generated_android_ids rule does.
+set(CUTILS_INCLUDE "${AOSP_SYSTEM}/core/libcutils/include")
+set(AID_HEADER "${CUTILS_INCLUDE}/private/android_filesystem_config.h")
+add_custom_command(OUTPUT "${GEN}/generated_android_ids.h"
+    COMMAND "${AWK}" -f "${PROJECT_ROOT}/tools/fs_config/gen_android_ids.awk"
+        "${AID_HEADER}" > "${GEN}/generated_android_ids.h"
+    DEPENDS "${PROJECT_ROOT}/tools/fs_config/gen_android_ids.awk"
+        "${AID_HEADER}"
+    VERBATIM)
+libc_objects(libc_grp_pwd
+    SRCS "${LIBC}/bionic/grp_pwd.cpp" "${LIBC}/bionic/grp_pwd_file.cpp"
+        "${GEN}/generated_android_ids.h"
+    INCLUDES "${GEN}")
+
 # The _chk functions.  Build them without FORTIFY, or they would call
 # themselves.
 libc_objects(libc_fortify
@@ -283,20 +319,34 @@ libc_objects(libc_fortify
 libc_objects(libc_freebsd_port
     SRCS "${LIBC}/arch-arm64/bionic/_exit_with_stack_teardown.S"
         "${LIBC}/arch-arm64/freebsd/fork.S"
+        "${LIBC}/arch-arm64/bionic/setjmp.S"
         "${LIBC}/arch-arm64/bionic/syscall.S"
         "${LIBC}/arch-arm64/bionic/vfork.S"
         "${LIBC}/bionic/freebsd/__set_errno_from_freebsd.c"
+        "${LIBC}/bionic/freebsd/capability.c"
         "${LIBC}/bionic/freebsd/elf_aux_info.cpp"
         "${LIBC}/bionic/freebsd/getdents.c"
         "${LIBC}/bionic/freebsd/icu4x_ascii.cpp"
+        "${LIBC}/bionic/freebsd/inotify.c"
         "${LIBC}/bionic/freebsd/madvise.c"
+        "${LIBC}/bionic/freebsd/memfd_create.c"
+        "${LIBC}/bionic/freebsd/mlock2.c"
+        "${LIBC}/bionic/freebsd/mmap.c"
         "${LIBC}/bionic/freebsd/no_equivalent.c"
         "${LIBC}/bionic/freebsd/mprotect.c"
         "${LIBC}/bionic/freebsd/prctl.c"
+        "${LIBC}/bionic/freebsd/priority.c"
         "${LIBC}/bionic/freebsd/qsort.c"
+        "${LIBC}/bionic/freebsd/recvmmsg.c"
+        "${LIBC}/bionic/freebsd/recvmsg.c"
+        "${LIBC}/bionic/freebsd/sched.c"
         "${LIBC}/bionic/freebsd/sendmmsg.c"
+        "${LIBC}/bionic/freebsd/sockopt.c"
         "${LIBC}/bionic/freebsd/statfs.c"
+        "${LIBC}/bionic/freebsd/sysctlbyname.c"
         "${LIBC}/bionic/freebsd/sysinfo.c"
+        "${LIBC}/bionic/freebsd/timekeep.c"
+        "${LIBC}/bionic/freebsd/umount.c"
         "${LIBC}/bionic/freebsd/uname.c"
         "${LIBC}/bionic/freebsd/xattr.c")
 # FreeBSD's realpath(3) and struct statfs have PATH_MAX buffers.
@@ -364,9 +414,12 @@ libc_objects(libc_openbsd
         "${OPENBSD}/lib/libc/crypt/arc4random.c"
         "${OPENBSD}/lib/libc/crypt/arc4random_uniform.c"
         "${OPENBSD}/lib/libc/gen/alarm.c"
+        "${OPENBSD}/lib/libc/gen/daemon.c"
+        "${OPENBSD}/lib/libc/gen/fnmatch.c"
         "${LIBC}/bionic/fts.c"
         "${OPENBSD}/lib/libc/locale/btowc.c"
         "${OPENBSD}/lib/libc/locale/mbrlen.c"
+        "${OPENBSD}/lib/libc/locale/mbstowcs.c"
         "${OPENBSD}/lib/libc/locale/mbtowc.c"
         "${OPENBSD}/lib/libc/locale/wctob.c"
         "${OPENBSD}/lib/libc/stdio/fgetwc.c"
@@ -438,16 +491,24 @@ libc_objects(libc_freebsd_string
     FLAGS -Wno-sign-compare -Wno-unused-parameter -include freebsd-compat.h
     INCLUDES "${LIBC}/upstream-freebsd/android/include")
 
-# FreeBSD's realpath(3) on __realpathat(2), in place of bionic's realpath.cpp,
-# which reads /proc/self/fd.
+# getopt_long(3) as on Android, and FreeBSD's realpath(3) on __realpathat(2)
+# in place of bionic's realpath.cpp, which reads /proc/self/fd.
 libc_objects(libc_freebsd
-    SRCS "${LIBC}/upstream-freebsd/lib/libc/stdlib/realpath.c"
-    FLAGS -Wno-sign-compare -include freebsd-compat.h
+    SRCS "${LIBC}/upstream-freebsd/lib/libc/stdlib/getopt_long.c"
+        "${LIBC}/upstream-freebsd/lib/libc/stdlib/realpath.c"
+    FLAGS -Wno-sign-compare -Wno-unused-parameter -include freebsd-compat.h
     INCLUDES "${LIBC}/upstream-freebsd/android/include")
 
-# random(3) and regex(3) come from NetBSD, as on Android.
+# ldexp(3) is libm's scalbn() under another name, as libc_freebsd_ldexp of
+# libc/Android.bp builds it.
+libc_objects(libc_freebsd_ldexp
+    SRCS "${BIONIC_SRC}/libm/upstream-freebsd/lib/msun/src/s_scalbn.c"
+    FLAGS -Dscalbn=ldexp)
+
+# nice(3), random(3) and regex(3) come from NetBSD, as on Android.
 libc_objects(libc_netbsd
     SRCS "${LIBC}/upstream-netbsd/common/lib/libc/stdlib/random.c"
+        "${LIBC}/upstream-netbsd/lib/libc/gen/nice.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regcomp.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regerror.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regexec.c"
@@ -475,6 +536,7 @@ libc_objects(libc_tzcode
 set(LIBC_COMMON "${GEN}/syscalls-arm64.S"
     $<TARGET_OBJECTS:libc_bootstrap>
     $<TARGET_OBJECTS:libc_bionic>
+    $<TARGET_OBJECTS:libc_grp_pwd>
     $<TARGET_OBJECTS:libc_fortify>
     $<TARGET_OBJECTS:libc_freebsd_port>
     $<TARGET_OBJECTS:libc_openbsd>
@@ -482,6 +544,7 @@ set(LIBC_COMMON "${GEN}/syscalls-arm64.S"
     $<TARGET_OBJECTS:libc_gdtoa>
     $<TARGET_OBJECTS:libc_freebsd_string>
     $<TARGET_OBJECTS:libc_freebsd>
+    $<TARGET_OBJECTS:libc_freebsd_ldexp>
     $<TARGET_OBJECTS:libc_netbsd>
     $<TARGET_OBJECTS:libc_tzcode>)
 add_library(c_static STATIC ${LIBC_COMMON}
@@ -506,8 +569,12 @@ add_library(crtbegin_dynamic_o OBJECT
     "${LIBC}/arch-common/bionic/crtbegin.c")
 target_compile_options(crtbegin_dynamic_o PRIVATE -fno-stack-protector)
 add_library(crtend_o OBJECT "${LIBC}/arch-common/bionic/crtend.S")
+# crtbegin_so.o and crtend_so.o: for shared objects other than libc.so.
+add_library(crtbegin_so_o OBJECT "${LIBC}/arch-common/bionic/crtbegin_so.c")
+target_compile_options(crtbegin_so_o PRIVATE -fno-stack-protector)
+add_library(crtend_so_o OBJECT "${LIBC}/arch-common/bionic/crtend_so.S")
 
-foreach(crt crtbegin_static crtbegin_dynamic)
+foreach(crt crtbegin_static crtbegin_dynamic crtbegin_so)
 	add_custom_command(OUTPUT "${GEN}/${crt}.o"
 	    COMMAND "${CMAKE_C_COMPILER}" "--config=${ANDROID_CLANG_CFG}"
 	        -nostdlib -fuse-ld=lld -Wl,-r -o "${GEN}/${crt}.o"
@@ -515,12 +582,15 @@ foreach(crt crtbegin_static crtbegin_dynamic)
 	    DEPENDS "$<TARGET_OBJECTS:${crt}_o>" "$<TARGET_OBJECTS:crt_parts>"
 	    COMMAND_EXPAND_LISTS VERBATIM)
 endforeach()
-add_custom_command(OUTPUT "${GEN}/crtend.o"
-    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_OBJECTS:crtend_o>"
-        "${GEN}/crtend.o"
-    DEPENDS "$<TARGET_OBJECTS:crtend_o>" VERBATIM)
+foreach(crt crtend crtend_so)
+	add_custom_command(OUTPUT "${GEN}/${crt}.o"
+	    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_OBJECTS:${crt}_o>"
+	        "${GEN}/${crt}.o"
+	    DEPENDS "$<TARGET_OBJECTS:${crt}_o>" VERBATIM)
+endforeach()
 add_custom_target(crt ALL DEPENDS "${GEN}/crtbegin_static.o"
-    "${GEN}/crtbegin_dynamic.o" "${GEN}/crtend.o")
+    "${GEN}/crtbegin_dynamic.o" "${GEN}/crtbegin_so.o" "${GEN}/crtend.o"
+    "${GEN}/crtend_so.o")
 
 set(LINKER "${BIONIC_SRC}/linker")
 set(SO_LINK_OPTIONS -nostdlib -fuse-ld=lld -Wl,--no-undefined
@@ -534,9 +604,12 @@ target_compile_options(ld_android PRIVATE -Wextra -Wunused -nostdinc++)
 target_link_options(ld_android PRIVATE -nostdlib -fuse-ld=lld
     "-Wl,--version-script=${LINKER}/linker.generic.map")
 
-# libdl.so: a shim over the __loader_* functions of linker64.
+# libdl.so: a shim over the __loader_* functions of linker64.  It and
+# libdl_android.so have no crt objects (nocrt in libdl/Android.bp), so they
+# get the FreeBSD ABI note directly, as libc.so and linker64 do.
 add_library(dl_shared SHARED "${BIONIC_SRC}/libdl/libdl.cpp"
-    "${BIONIC_SRC}/libdl/libdl_cfi.cpp")
+    "${BIONIC_SRC}/libdl/libdl_cfi.cpp"
+    "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
 set_target_properties(dl_shared PROPERTIES OUTPUT_NAME dl SKIP_BUILD_RPATH ON)
 target_compile_options(dl_shared PRIVATE -Wextra -Wunused -nostdinc++
     -std=gnu++20)
@@ -544,7 +617,8 @@ target_link_options(dl_shared PRIVATE ${SO_LINK_OPTIONS} -Wl,-soname,libdl.so)
 target_link_libraries(dl_shared PRIVATE ld_android)
 
 # libdl_android.so wraps the platform-only __loader_* functions.
-add_library(dl_android SHARED "${BIONIC_SRC}/libdl/libdl_android.cpp")
+add_library(dl_android SHARED "${BIONIC_SRC}/libdl/libdl_android.cpp"
+    "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
 set_target_properties(dl_android PROPERTIES OUTPUT_NAME dl_android
     SKIP_BUILD_RPATH ON)
 target_compile_options(dl_android PRIVATE -Wextra -Wunused -nostdinc++
@@ -558,6 +632,7 @@ target_link_libraries(dl_android PRIVATE ld_android)
 # bionic's generate-version-script).
 libc_objects(libc_sources_shared
     SRCS "${LIBC}/arch-common/bionic/crtbegin_so.c"
+        "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S"
         "${LIBC}/bionic/android_profiling_dynamic.cpp"
         "${LIBC}/bionic/NetdClient.cpp"
         "${LIBC}/arch-common/bionic/crtend_so.S")
@@ -577,6 +652,10 @@ endif()
 # linker/Android.bp): libbase, liblog, libziparchive and zlib.  They are
 # C++ code that uses libc++ from the bionic sysroot.
 set(CXX_INCLUDE "${BIONIC_SYSROOT}/usr/include/c++/v1")
+# Once libc++ is in the sysroot, CMake finds this directory among the
+# compiler's implicit ones and leaves out its -isystem, but -nostdlibinc
+# takes it away again.  Keep it explicit.
+list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "${CXX_INCLUDE}")
 # AOSP's global flags for clang 22 warnings that AOSP code still gives.
 set(AOSP_CXX_FLAGS -fno-exceptions -Wno-vla-cxx-extension
     -Wno-c99-designator -Wno-missing-field-initializers
@@ -590,7 +669,8 @@ function(aosp_library name)
 	target_include_directories(${name} SYSTEM BEFORE PRIVATE
 	    "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE ${L_INCLUDES})
-	target_compile_options(${name} PRIVATE -D_FILE_OFFSET_BITS=64
+	# NDEBUG as in AOSP release builds: ALOGV() compiles to nothing.
+	target_compile_options(${name} PRIVATE -D_FILE_OFFSET_BITS=64 -DNDEBUG
 	    "$<$<COMPILE_LANGUAGE:CXX>:${AOSP_CXX_FLAGS}>" ${L_FLAGS})
 endfunction()
 
@@ -599,15 +679,25 @@ aosp_library(z
         "${ZLIB_SRC}/deflate.c" "${ZLIB_SRC}/inffast.c"
         "${ZLIB_SRC}/inflate.c" "${ZLIB_SRC}/inftrees.c"
         "${ZLIB_SRC}/trees.c" "${ZLIB_SRC}/zutil.c")
+# libbase has fmtlib in it (whole_static_libs), so programs that link base
+# get fmtlib too.
+set(FMTLIB "${AOSP_EXTERNAL}/fmtlib")
+aosp_library(fmtlib
+    SRCS "${FMTLIB}/src/format.cc"
+    FLAGS -fno-exceptions -UNDEBUG
+    INCLUDES "${FMTLIB}/include")
 aosp_library(base
-    SRCS "${LIBBASE}/file.cpp" "${LIBBASE}/logging.cpp"
+    SRCS "${LIBBASE}/chrono_utils.cpp" "${LIBBASE}/cmsg.cpp"
+        "${LIBBASE}/file.cpp" "${LIBBASE}/hex.cpp" "${LIBBASE}/logging.cpp"
         "${LIBBASE}/mapped_file.cpp" "${LIBBASE}/parsebool.cpp"
-        "${LIBBASE}/posix_strerror_r.cpp" "${LIBBASE}/properties.cpp"
-        "${LIBBASE}/stringprintf.cpp" "${LIBBASE}/strings.cpp"
-        "${LIBBASE}/threads.cpp" "${LIBBASE}/errors_unix.cpp"
-        "${LIBBASE}/test_utils.cpp"
-    FLAGS -std=gnu++23 -Wextra
-    INCLUDES "${LIBBASE}/include" "${LIBLOG}/include")
+        "${LIBBASE}/parsenetaddress.cpp" "${LIBBASE}/posix_strerror_r.cpp"
+        "${LIBBASE}/process.cpp" "${LIBBASE}/properties.cpp"
+        "${LIBBASE}/result.cpp" "${LIBBASE}/stringprintf.cpp"
+        "${LIBBASE}/strings.cpp" "${LIBBASE}/threads.cpp"
+        "${LIBBASE}/test_utils.cpp" "${LIBBASE}/errors_unix.cpp"
+    FLAGS -std=gnu++23 -Wextra -Wexit-time-destructors
+    INCLUDES "${LIBBASE}/include" "${LIBLOG}/include" "${FMTLIB}/include")
+target_link_libraries(base INTERFACE fmtlib)
 aosp_library(log
     SRCS "${LIBLOG}/log_event_list.cpp" "${LIBLOG}/log_event_write.cpp"
         "${LIBLOG}/logger_name.cpp" "${LIBLOG}/logger_read.cpp"
@@ -622,6 +712,12 @@ aosp_library(log
         "${AOSP_SYSTEM}/core/libcutils/include"
         "${AOSP_SYSTEM}/core/libutils/include"
         "${AOSP_SYSTEM}/core/libsystem/include")
+# libtinyxml2 for the malloc_info() tests, with its Android flags.
+set(TINYXML2 "${AOSP_EXTERNAL}/tinyxml2")
+aosp_library(tinyxml2
+    SRCS "${TINYXML2}/tinyxml2.cpp"
+    FLAGS -Wall -Werror -Wno-implicit-fallthrough -DDEBUG -DANDROID_NDK
+    INCLUDES "${TINYXML2}" "${LIBLOG}/include")
 aosp_library(ziparchive
     SRCS "${ZIPARCHIVE}/zip_archive.cc"
         "${ZIPARCHIVE}/zip_archive_stream_entry.cc"
@@ -681,21 +777,22 @@ endif()
 # abi_check: the probe gets the FreeBSD values from the FreeBSD sysroot,
 # and abi_check.c must compile against the bionic-freebsd headers.
 add_custom_command(OUTPUT "${GEN}/abi_check.c"
-    COMMAND "${Python3_EXECUTABLE}" "${PARITY}/gen_abi_check.py"
-        > "${GEN}/abi_probe.c"
-    COMMAND "${HOST_CC}" -Wall -o "${GEN}/abi_probe" "${GEN}/abi_probe.c"
+    COMMAND "${HOST_CC}" -Wall -o "${GEN}/abi_probe" "${PARITY}/abi_probe.c"
     COMMAND "${GEN}/abi_probe" > "${GEN}/abi_check.c"
-    DEPENDS "${PARITY}/gen_abi_check.py"
+    DEPENDS "${PARITY}/abi_probe.c"
     VERBATIM)
 add_library(abi_check OBJECT "${GEN}/abi_check.c")
 
 # Install the headers, libc.a and the crt objects as the bionic sysroot
 # that the clang configuration points at:
 #   cmake --install <build> --prefix /home/dev/build/sysroot-bionic-freebsd
-install(DIRECTORY "${LIBC}/include/" DESTINATION usr/include)
+install(DIRECTORY "${LIBC}/include/" DESTINATION usr/include
+    PATTERN linux-compat EXCLUDE)
+install(DIRECTORY "${LIBC}/include/linux-compat/" DESTINATION usr/include)
 install(TARGETS c_static ARCHIVE DESTINATION usr/lib)
 install(FILES "${GEN}/crtbegin_static.o" "${GEN}/crtbegin_dynamic.o"
-    "${GEN}/crtend.o" DESTINATION usr/lib)
+    "${GEN}/crtbegin_so.o" "${GEN}/crtend.o" "${GEN}/crtend_so.o"
+    DESTINATION usr/lib)
 
 # Static test programs: bionic's startup, then main().
 function(static_test name)
@@ -764,14 +861,15 @@ add_custom_target(android_root ALL
     WORKING_DIRECTORY "${GEN}" VERBATIM)
 
 enable_testing()
-add_test(NAME parse_syscalls_master COMMAND "${Python3_EXECUTABLE}"
-    "${PARITY}/test_parse_syscalls_master.py")
+add_test(NAME parse_syscalls_master COMMAND sh
+    "${PARITY}/test_parse_syscalls_master.sh")
+set_tests_properties(parse_syscalls_master PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME syscall_numbers_current COMMAND sh -c
-    "\"$0\" \"$1\" header \"$2\" | cmp - \"$3\""
-    "${Python3_EXECUTABLE}" "${PARITY}/parse_syscalls_master.py"
+    "\"$0\" -f \"$1\" header \"$2\" | cmp - \"$3\""
+    "${AWK}" "${PARITY}/parse_syscalls_master.awk"
     "${SYSCALLS_MASTER}" "${LIBC}/include/bits/freebsd/syscall_numbers.h")
-add_test(NAME syscalls_freebsd_rows COMMAND "${Python3_EXECUTABLE}"
-    "${PARITY}/parse_syscalls_master.py" check "${SYSCALLS_MASTER}"
+add_test(NAME syscalls_freebsd_rows COMMAND "${AWK}" -f
+    "${PARITY}/parse_syscalls_master.awk" check "${SYSCALLS_MASTER}"
     "${LIBC}/SYSCALLS.FREEBSD.TXT")
 add_test(NAME hello_static COMMAND hello_static)
 set_tests_properties(hello_static PROPERTIES
@@ -788,6 +886,24 @@ add_test(NAME thread_dynamic_linker64 COMMAND linker64
     $<TARGET_FILE:thread_test_dynamic>)
 set_tests_properties(thread_dynamic_linker64 PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${GEN}" PASS_REGULAR_EXPRESSION "\nthreads ok")
+# A zip with a duplicate entry comes first on LD_LIBRARY_PATH.
+# libziparchive logs the entry with no tag, so liblog in linker64 takes
+# getprogname() for the tag; with no program name, linker64 crashes
+# before main().  The log goes to logd, not to stderr.  The zip does not
+# open, and libc.so comes from the next directory.
+add_custom_command(OUTPUT "${GEN}/dup_entry.zip"
+    COMMAND bsdtar -c --format zip --options zip:compression=store
+        -f "${GEN}/dup_entry.zip" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+        hello_static.c hello_static.c
+    DEPENDS hello_static.c VERBATIM)
+add_custom_target(dup_entry_zip ALL DEPENDS "${GEN}/dup_entry.zip")
+add_test(NAME zip_dup_entry_linker64 COMMAND sh -c [=[
+out=$(LD_LIBRARY_PATH="$1!/lib:$2" "$0" "$3" 2>&1)
+rc=$?
+echo "$out"
+test $rc -eq 0 && echo "$out" | grep -q '^hello from bionic-freebsd'
+]=] $<TARGET_FILE:linker64> "${GEN}/dup_entry.zip" "${GEN}"
+    $<TARGET_FILE:hello_dynamic>)
 add_test(NAME threads COMMAND thread_test)
 set_tests_properties(threads PROPERTIES PASS_REGULAR_EXPRESSION "^threads ok")
 add_test(NAME signals COMMAND signal_test)
@@ -804,7 +920,10 @@ echo "$out"
 test $rc -eq 134 && echo "$out" | grep -q 'stack corruption detected'
 ]=] "$<TARGET_FILE:ssp_test>")
 
-# bionic-unit-tests-static, once googletest and gtest_extras are fetched.
+# bionic-unit-tests-static, once googletest and gtest_extras are fetched,
+# then the tests of libbase, liblog, libcutils and libutils.
 if(EXISTS "${AOSP_EXTERNAL}/googletest/googletest/src/gtest-all.cc")
 	include(tests.cmake)
+	include(system-tests.cmake)
+	include(logd.cmake)
 endif()

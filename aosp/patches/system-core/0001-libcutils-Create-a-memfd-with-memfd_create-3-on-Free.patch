@@ -1,0 +1,38 @@
+From e4a444e74b3af2aa14151c9246b64129211ba5a7 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 19:11:24 +0000
+Subject: [PATCH] libcutils: Create a memfd with memfd_create(3) on FreeBSD
+
+FreeBSD has no memfd_create system call.  Its libc makes a memfd with
+shm_open2(2), so __memfd_create_region() calls memfd_create(3) on
+FreeBSD.  The other targets keep the system call, because libcutils
+builds for API levels before 30.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item K2).
+---
+ libcutils/ashmem-dev.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/libcutils/ashmem-dev.cpp b/libcutils/ashmem-dev.cpp
+index 63a0cbf..2a95c5b 100644
+--- a/libcutils/ashmem-dev.cpp
++++ b/libcutils/ashmem-dev.cpp
+@@ -213,9 +213,14 @@ int ashmem_valid(int fd) {
+ }
+ 
+ int __memfd_create_region(const char* name, size_t size) {
++#if defined(__FreeBSD__)
++    // FreeBSD has no memfd_create system call; the libc makes the memfd.
++    android::base::unique_fd fd(memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING));
++#else
+     // This code needs to build on API levels before 30,
+     // so we can't use the libc wrapper.
+     android::base::unique_fd fd(syscall(__NR_memfd_create, name, MFD_CLOEXEC | MFD_ALLOW_SEALING));
++#endif
+ 
+     if (fd == -1) {
+         ALOGE("memfd_create(%s, %zd) failed: %m", name, size);
+-- 
+2.56.0
+

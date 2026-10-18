@@ -1,0 +1,79 @@
+From 80d8e78f290020f9b3b2ca505540abda0b452fd9 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sun, 18 Oct 2026 20:19:03 +0000
+Subject: [PATCH] abseil: Build with bionic on FreeBSD
+
+bionic on FreeBSD is neither Linux bionic nor the FreeBSD libc, so three
+checks choose the wrong code:
+
+- futex.h takes the Linux futex system call for any __BIONIC__ build.
+  FreeBSD has no futex, so take it only for bionic on Linux; the other
+  builds use the pthread waiter.
+- sysinfo.cc includes <pthread_np.h> and calls pthread_getthreadid_np()
+  on FreeBSD.  bionic has neither; it has gettid().
+- vdso_support.cc names the auxv types of the FreeBSD libc.  bionic has
+  Elf32_auxv_t and Elf64_auxv_t itself.
+
+Android (bionic on Linux) and the FreeBSD libc do not change.
+
+The project freebsd-android-native carries this patch (ADR 0004,
+item R9).
+---
+ absl/base/internal/sysinfo.cc           | 6 +++++-
+ absl/debugging/internal/vdso_support.cc | 2 +-
+ absl/synchronization/internal/futex.h   | 2 +-
+ 3 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/absl/base/internal/sysinfo.cc b/absl/base/internal/sysinfo.cc
+index a62dd31..4dcc543 100644
+--- a/absl/base/internal/sysinfo.cc
++++ b/absl/base/internal/sysinfo.cc
+@@ -34,7 +34,7 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
+-#ifdef __FreeBSD__
++#if defined(__FreeBSD__) && !defined(__BIONIC__)
+ #include <pthread_np.h>
+ #endif
+ 
+@@ -444,6 +444,10 @@ pid_t GetTID() {
+   return static_cast<pid_t>(tid);
+ }
+ 
++#elif defined(__BIONIC__)
++
++pid_t GetTID() { return gettid(); }
++
+ #elif defined(__FreeBSD__)
+ 
+ pid_t GetTID() { return static_cast<pid_t>(pthread_getthreadid_np()); }
+diff --git a/absl/debugging/internal/vdso_support.cc b/absl/debugging/internal/vdso_support.cc
+index f7e2a44..4b17c87 100644
+--- a/absl/debugging/internal/vdso_support.cc
++++ b/absl/debugging/internal/vdso_support.cc
+@@ -55,7 +55,7 @@
+ using Elf32_auxv_t = Aux32Info;
+ using Elf64_auxv_t = Aux64Info;
+ #endif
+-#if defined(__FreeBSD__)
++#if defined(__FreeBSD__) && !defined(__BIONIC__)
+ #if defined(__ELF_WORD_SIZE) && __ELF_WORD_SIZE == 64
+ using Elf64_auxv_t = Elf64_Auxinfo;
+ #endif
+diff --git a/absl/synchronization/internal/futex.h b/absl/synchronization/internal/futex.h
+index 573c01b..09141c6 100644
+--- a/absl/synchronization/internal/futex.h
++++ b/absl/synchronization/internal/futex.h
+@@ -39,7 +39,7 @@
+ 
+ #ifdef ABSL_INTERNAL_HAVE_FUTEX
+ #error ABSL_INTERNAL_HAVE_FUTEX may not be set on the command line
+-#elif defined(__BIONIC__)
++#elif defined(__BIONIC__) && defined(__linux__)
+ // Bionic supports all the futex operations we need even when some of the futex
+ // definitions are missing.
+ #define ABSL_INTERNAL_HAVE_FUTEX
+-- 
+2.56.0
+

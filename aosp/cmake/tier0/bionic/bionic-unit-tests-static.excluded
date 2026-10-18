@@ -29,69 +29,21 @@
 # parity id is a Linux system call from docs/specs/syscall-parity.md, or
 # one of
 #	abi:<name>	a row of docs/specs/abi-gap.md
-#	tier0:<item>	something the tier-0 build does not have yet
+#	tier0:<item>	an Android component that the tier-0 build does not
+#			have yet: a row of the tier-0 table of abi-gap.md
 #	env:<item>	a quirk of the FreeBSD dev VM, not of Android
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-pthread.pthread_attr_setinheritsched_PTHREAD_EXPLICIT_SCHED_takes_effect  sched_setscheduler  pthread_setschedparam gives ESRCH; sched_setscheduler takes a pid, not a thread id.
-pthread.pthread_attr_setinheritsched_PTHREAD_INHERIT_SCHED_takes_effect  sched_setscheduler  pthread_setschedparam gives ESRCH; sched_setscheduler takes a pid, not a thread id.
-pthread.pthread_attr_setinheritsched__PTHREAD_INHERIT_SCHED__PTHREAD_EXPLICIT_SCHED  sched_setscheduler  pthread_create gives ESRCH, not EINVAL; sched_setscheduler gets a thread id as pid.
-pthread.pthread_attr_setinheritsched__takes_effect_despite_SCHED_RESET_ON_FORK  sched_setscheduler  pthread_setschedparam gives ESRCH; sched_setscheduler takes a pid, not a thread id.
-pthread.pthread_create__mmap_failures  mmap  Test maps pages until mmap fails, expecting a 64Ki VMA limit; FreeBSD has none.
-pthread.pthread_mutex_clocklock_pi  futex  Contended PI mutex lock gives ENOSYS; there is no priority-inheritance futex yet.
-pthread.pthread_mutex_pi_wakeup  futex  Needs a PI futex and reads thread priority from /proc/<tid>/stat.
-pthread.pthread_mutex_timedlock_monotonic_np_pi  futex  Contended PI mutex lock gives ENOSYS; there is no priority-inheritance futex yet.
-pthread.pthread_mutex_timedlock_pi  futex  Contended PI mutex lock gives ENOSYS; there is no priority-inheritance futex yet.
-pthread.pthread_setname_np__pthread_getname_np__other  prctl  pthread_getname_np of another thread opens /proc/self/task/<tid>/comm; ENOENT.
-pthread.pthread_setname_np__pthread_getname_np__other_PR_SET_DUMPABLE  prctl  pthread_getname_np of another thread opens /proc/self/task/<tid>/comm; ENOENT.
-pthread.pthread_setname_np__pthread_getname_np__self  prctl  pthread_getname_np of self gives EINVAL; prctl(PR_GET_NAME) is not done.
-pthread.pthread_setschedparam  sched_setscheduler  pthread_setschedparam gives ESRCH, not EINVAL; it passes a thread id as pid.
-pthread.pthread_setschedprio  sched_setparam  pthread_setschedprio gives ESRCH, not EINVAL; it passes a thread id as pid.
-pthread_DeathTest.pthread_bug_37410  exit  Child dies with SIGILL when the main thread calls pthread_exit and a thread joins it. ?
-pthread_DeathTest.pthread_setname_np__null_thread  prctl  pthread_setname_np of a null thread gives ESRCH; test expects ENOENT.
-signal.limits  abi:nsig  __SIGRTMIN is 65 and __SIGRTMAX is 126; test expects 32 and 64.
-signal.pthread_sigqueue_other  rt_tgsigqueueinfo  pthread_sigqueue gives ENOSYS; no system call queues a signal to one thread.
-signal.pthread_sigqueue_self  rt_tgsigqueueinfo  pthread_sigqueue gives ENOSYS; no system call queues a signal to one thread.
-signal.sigaction  rt_sigaction  Untouched SIGALRM reports SA_RESTART; FreeBSD derives it from state inherited across exec.
-signal.sigaction64_SIGRTMIN  rt_sigaction  Untouched signal reports SA_RESTART; FreeBSD derives it from state inherited across exec.
-signal.str2sig  abi:nsig  str2sig("64") fails; SIGRTMAX is 126, not 64.
-stack_protector.same_guard_per_thread  gettid  getpid() differs from gettid() in the main thread; thread ids are not the pid.
-stdio.dev_std_files  env:no-proc  readlink of /dev/stdin gives fd/0; test expects /proc/self/fd/0.
-stdio.getc  env:no-proc  Test reads "Linux" from /proc/version; FreeBSD has no /proc/version.
-stdio.popen_r  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.popen_return_value_0  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.popen_return_value_1  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.popen_return_value_signal  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.popen_socketpair  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.popen_socketpair_shutdown  env:bin-sh  popen runs sh -c -- cmd; FreeBSD sh reports "--: not found", exit 127.
-stdio.tmpfile_TMPDIR  env:no-proc  readlink of /proc/self/fd/<n> fails; there is no /proc.
-stdio_DeathTest.snprintf_30445072_known_buffer_size  tier0:fortify  Death message is the SSIZE_MAX check, not the compile-time buffer check. ?
-time.clock_getcpuclockid_ESRCH  env:no-proc  Test reads /proc/sys/kernel/pid_max; fopen returns null and the test crashes.
-time.clock_getres_CLOCK_BOOTTIME  clock_getres  clock_getres gives tv_nsec 42 (counter tick); test expects 1.
-time.clock_getres_CLOCK_MONOTONIC  clock_getres  clock_getres gives tv_nsec 42 (counter tick); test expects 1.
-time.clock_getres_CLOCK_REALTIME  clock_getres  clock_getres gives tv_nsec 42 (counter tick); test expects 1.
-time.clock_getres_unknown  clock_getres  clock_getres(-1) succeeds; FreeBSD treats a negative clock id as a CPU-time clock.
-time.clock_settime  clock_settime  clock_settime(-1) gives EPERM for user dev; FreeBSD checks privilege before the clock id.
-time.timer_create_EINVAL  abi:clock-ids  timer_create succeeds for clock 16, which is CLOCK_TAI on FreeBSD.
-time.timespec_getres  clock_getres  clock_getres gives tv_nsec 42 (counter tick); test expects 1.
-time.tzalloc_nullptr  env:no-properties  No persist.sys.timezone in the dev VM, so the system zone name is empty, not GMT.
-unistd.clone_fn_and_exit  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.exec_argv0_null  env:system-bin  Test runs run-as from BIN_DIR; the dev VM has no run-as.
-unistd.execv_failure  execve  exec with a null argv gives EFAULT before the path check; test expects EACCES.
-unistd.execve_failure  execve  exec with a null argv gives EFAULT before the path check; test expects EACCES.
-unistd.execvp_failure  execve  exec with an empty argv gives EINVAL before the path check; test expects EACCES.
-unistd.execvpe_failure  execve  exec with a null argv gives EFAULT, not ENOENT or EACCES.
-unistd.fdatasync  env:data-local-tmp  Test opens /data/local/tmp and /proc/version; the dev VM has neither.
-unistd.fexecve_bad_fd  execve  fexecve(2) with a null argv gives EFAULT before the fd check; test expects EBADF.
-unistd.fexecve_failure  execve  exec with a null argv gives EFAULT before the path check; test expects EACCES.
-unistd.fsync  env:data-local-tmp  Test opens /data/local/tmp and /proc/version; the dev VM has neither.
-unistd.getpid_works_after_clone  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.getpid_works_after_clone_process  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.gettid_works_after_clone  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.gettid_works_after_clone_process  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.gettid_works_after_clone_process_settid  clone  clone() fails on purpose; FreeBSD has no equivalent (no_equivalent.c).
-unistd.read  env:no-proc  Test reads "Linux" from /proc/version; FreeBSD has no /proc/version.
-unistd.syncfs  syncfs  syncfs gives ENOSYS; it fails on purpose (no_equivalent.c).
-unistd.sysconf_SC_ARG_MAX  execve  sysconf(_SC_ARG_MAX) gives fixed 524288; test expects RLIMIT_STACK / 4.
-unistd.sysconf_SC_NPROCESSORS_ONLN  env:no-sys  Test reads /sys/devices/system/cpu/online; FreeBSD has no /sys.
+android_mallopt.multiple_enable_gwp_asan  tier0:gwp-asan  The tier-0 libc has no GWP-ASan, so M_INITIALIZE_GWP_ASAN fails in the child run.
+pthread.pthread_attr_setinheritsched__takes_effect_despite_SCHED_RESET_ON_FORK  sched_setscheduler  FreeBSD has no SCHED_RESET_ON_FORK; sched_setscheduler gives EINVAL for a policy with that flag.
+pthread.pthread_mutex_pi_wakeup  setpriority  Test sets the nice value of one thread (FreeBSD nice is per process, K7) and reads the Linux priority from /proc/<tid>/stat.
+stdio.popen_socketpair_shutdown  tier0:toybox  Test runs uniq -c, a toybox program, which tier 0 does not build (plan M6). FreeBSD's uniq gives a count of 4 columns, not 7.
+stdio.tmpfile_TMPDIR  abi:o_tmpfile  The test expects "<TMPDIR path> (deleted)" from readlink of /proc/self/fd/<n>. FreeBSD has no O_TMPFILE (K11), so tmpfile() removes a named file, and the kernel keeps no name of a removed file: aprocfs gives "/#<inode> (deleted)".
+sys_mman.mremap_MREMAP_FIXED  mremap  FreeBSD has no mremap(2), so mremap() fails with ENOSYS until K10 and MREMAP_FIXED cannot move the mapping (G1 gap).
+sys_xattr.flistattr  flistxattr  extattr_list_fd(2) lists one name space in one call and in another format, so flistxattr() gives ENOTSUP (no one-call form).
+sys_xattr.flistattr_invalid_fd  flistxattr  flistxattr() gives ENOTSUP before any call, so a bad descriptor does not give EBADF.
+sys_xattr.flistattr_opath  flistxattr  As sys_xattr.flistattr.
+sys_xattr.fsetxattr_toosmallbuf  fgetxattr  extattr_get_fd(2) copies what fits into a short buffer and returns its length, as read(2) does; Linux gives ERANGE.
+sys_xattr.fsetxattr_with_opath_toosmall  fgetxattr  As sys_xattr.fsetxattr_toosmallbuf.
+unistd.gettid_works_after_clone_process_settid  clone  clone() gives EINVAL for CLONE_CHILD_SETTID on a process: the child would need a second call to store its thread id (K26).

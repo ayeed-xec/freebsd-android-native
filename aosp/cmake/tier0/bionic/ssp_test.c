@@ -47,9 +47,16 @@ static void __attribute__((__noinline__))
 overflow(size_t len)
 {
 	char buf[16];
+	size_t i;
+	volatile char *p;
 
-	memset(buf, 'A', len);
-	__asm__ __volatile__("" : : "r"(buf) : "memory");
+	/*
+	 * Write one byte at a time.  FORTIFY would stop a memset() before
+	 * the stack protector can see the damage.
+	 */
+	p = buf;
+	for (i = 0; i < len; i++)
+		p[i] = 'A';
 }
 
 int
