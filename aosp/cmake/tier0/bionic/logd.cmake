@@ -150,7 +150,7 @@ set(LOGD_FLAGS -std=gnu++20 -Wextra -Wthread-safety -DAUDITD_LOG_TAG=1003
     -DTAG_DEF_LOG_TAG=1005 -DLIBLOG_LOG_TAG=1006 -DLOGD_NO_BINDER
     -Wno-error)
 set(LOGD_INCLUDES "${LOGD}" "${LOGD}/libaudit/include" "${ZSTD}/lib"
-    "${ZLIB_SRC}" "${LIBSYSUTILS}/include" "${PKGLIST}/include"
+    "${ZLIB}" "${LIBSYSUTILS}/include" "${PKGLIST}/include"
     "${LIBCAP}/libcap/include" ${SYSTEM_INCLUDES} "${LIBUTILS}/include")
 set(LIBLOGD_SRCS CompressionEngine.cpp LogBufferElement.cpp
     LogReaderList.cpp LogReaderThread.cpp LogSize.cpp LogStatistics.cpp
@@ -182,7 +182,7 @@ list(TRANSFORM LOGD_SRCS PREPEND "${LOGD}/")
 system_cxx_program(logd
     SRCS ${LOGD_SRCS}
     LIBS logd_lib audit sysutils packagelistparser processgroup jsoncpp
-        cap utils cutils log base zstd z
+        cap utils cutils log base zstd z_shared
     FLAGS ${LOGD_FLAGS}
     INCLUDES ${LOGD_INCLUDES})
 

@@ -1,0 +1,30 @@
+From 98b61d5f3f53897f8e202dd63a8f0ee43fd59fb4 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Mon, 19 Oct 2026 20:30:01 +0000
+Subject: [PATCH] gwp_asan: Use the native thread ID on bionic-freebsd
+
+Call the existing bionic gettid wrapper on FreeBSD. It returns the
+cached native thread ID or calls thr_self. Keep other platforms on
+their existing path.
+---
+ gwp_asan/platform_specific/common_posix.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/gwp_asan/platform_specific/common_posix.cpp b/gwp_asan/platform_specific/common_posix.cpp
+index 0637fc2..38ab68d 100644
+--- a/gwp_asan/platform_specific/common_posix.cpp
++++ b/gwp_asan/platform_specific/common_posix.cpp
+@@ -16,7 +16,9 @@
+ namespace gwp_asan {
+ 
+ uint64_t getThreadID() {
+-#ifdef SYS_gettid
++#if defined(__FreeBSD__) && defined(__BIONIC__)
++  return gettid();
++#elif defined(SYS_gettid)
+   return syscall(SYS_gettid);
+ #else
+   return kInvalidThreadID;
+-- 
+2.56.0
+

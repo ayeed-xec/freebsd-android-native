@@ -89,9 +89,11 @@ target_compile_options(m_static PRIVATE -Wno-undef -Wno-unused-parameter -O2
 set(BIONIC_TEST_SRCS gtest_globals.cpp gtest_main.cpp utils.cpp
     buffer_tests.cpp stack_protector_test_helper.cpp elftls_test.cpp
     fdsan_test.cpp malloc_test.cpp pthread_test.cpp semaphore_test.cpp
+    ifaddrs_test.cpp netdb_test.cpp net_if_test.cpp resolv_test.cpp
     setjmp_test.cpp signal_test.cpp stdio_test.cpp string_test.cpp
     stack_protector_test.cpp sys_epoll_test.cpp sys_mman_test.cpp
-    sys_select_test.cpp sys_xattr_test.cpp
+    sys_select_test.cpp sys_sysinfo_test.cpp sys_xattr_test.cpp
+    stdio_ext_test.cpp sys_statvfs_test.cpp
     system_properties_test.cpp eventfd_test.cpp
     sys_socket_cred_test.cpp
     system_properties_test2.cpp time_test.cpp unistd_test.cpp)
@@ -443,7 +445,7 @@ aosp_library(ziparchive_writer
     SRCS "${ZIPARCHIVE}/zip_writer.cc"
     FLAGS -std=gnu++20 -DZLIB_CONST -Wno-missing-field-initializers
     INCLUDES "${ZIPARCHIVE}/include" "${LIBBASE}/include" "${LIBLOG}/include"
-        "${ZLIB_SRC}" "${GTEST}/include")
+        "${ZLIB}" "${GTEST}/include")
 add_executable(bionic_tests_zipalign "${TESTLIB_SRC}/bionic_tests_zipalign.cpp")
 add_dependencies(bionic_tests_zipalign crt)
 target_include_directories(bionic_tests_zipalign SYSTEM BEFORE PRIVATE

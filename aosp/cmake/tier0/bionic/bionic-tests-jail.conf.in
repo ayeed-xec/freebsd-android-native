@@ -55,13 +55,17 @@
 # get the owners and modes that init gives them.  The test runner then
 # gives /data/local/tmp to the user that runs the tests, who has the part
 # of the shell user.
+# The jail owns a network stack with a dual-stack loopback named lo.
+# The host keeps its IPv6 socket default.
 
 bionic_tests {
 	path = "@ANDROID_JAIL_ROOT@";
 	host.hostname = "localhost";
-	ip4 = disable;
-	ip6 = disable;
+	vnet;
 	persist;
+	exec.created = "ifconfig -j bionic_tests lo0 name lo";
+	exec.created += "ifconfig -j bionic_tests lo inet 127.0.0.1/8 up";
+	exec.created += "sysctl -j bionic_tests net.inet6.ip6.v6only=0";
 	exec.prepare = "mkdir -p $path/apex/com.android.i18n \
 	    $path/apex/com.android.runtime $path/apex/com.android.tzdata \
 	    $path/system $path/dev $path/lib $path/libexec $path/mnt/dev \

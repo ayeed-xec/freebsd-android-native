@@ -40,21 +40,15 @@
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-AshmemMemfdCommonTests/AshmemMemfdTest.FileOperationsTest/Ashmem  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemMemfdCommonTests/AshmemMemfdTest.ForkMultiRegionTest/Ashmem  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemMemfdCommonTests/AshmemMemfdTest.ForkProtTest/Ashmem  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemMemfdCommonTests/AshmemMemfdTest.ForkTest/Ashmem  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemMemfdCommonTests/AshmemMemfdTest.ProtTest/Ashmem  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemTest.GetLongNameAshmemTests  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
-AshmemTest.SetNameKernelAccessTest  tier0:ashmem-device  FreeBSD has no /dev/ashmem device: the test makes its region with the ashmem device, not with memfd (gap register X8).
+AshmemMemfdCommonTests/AshmemMemfdTest.FileOperationsTest/Ashmem  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemMemfdCommonTests/AshmemMemfdTest.ForkMultiRegionTest/Ashmem  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemMemfdCommonTests/AshmemMemfdTest.ForkProtTest/Ashmem  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemMemfdCommonTests/AshmemMemfdTest.ForkTest/Ashmem  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemMemfdCommonTests/AshmemMemfdTest.ProtTest/Ashmem  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemTest.GetLongNameAshmemTests  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
+AshmemTest.SetNameKernelAccessTest  tier0:ashmem-device  The test makes its region on /dev/ashmem.  Android 17 uses memfd (sys.use_memfd), and new apps cannot open /dev/ashmem; no FreeBSD ashmem device (gap register X8, owner decision 2026-10-19).
 SchedPolicy.get_cpuset_policy_profile_name  tier0:libprocessgroup  sched_policy_test.cpp is not built: it needs libprocessgroup, which is not built yet (G1 gap).
 SchedPolicy.get_sched_policy_name  tier0:libprocessgroup  sched_policy_test.cpp is not built: it needs libprocessgroup, which is not built yet (G1 gap).
 SchedPolicy.get_sched_policy_profile_name  tier0:libprocessgroup  sched_policy_test.cpp is not built: it needs libprocessgroup, which is not built yet (G1 gap).
 SchedPolicy.set_sched_policy  tier0:libprocessgroup  sched_policy_test.cpp is not built: it needs libprocessgroup, which is not built yet (G1 gap).
 SchedPolicy.set_sched_policy_timerslack  tier0:libprocessgroup  sched_policy_test.cpp is not built: it needs libprocessgroup, which is not built yet (G1 gap).
-SocketsTest.TestGetLocalPort  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).
-SocketsTest.TestIpv4TcpLoopback  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).
-SocketsTest.TestIpv4UdpLoopback  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).
-SocketsTest.TestIpv6TcpLoopback  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).
-SocketsTest.TestIpv6UdpLoopback  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).
-SocketsTest.TestSocketSendBuffersFailure  tier0:libc-dns  sockets_test.cpp is not built: socket_network_client() needs getaddrinfo(3), and the tier-0 libc has no resolver yet (G1 gap).

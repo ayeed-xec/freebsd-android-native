@@ -35,15 +35,11 @@
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-android_mallopt.multiple_enable_gwp_asan  tier0:gwp-asan  The tier-0 libc has no GWP-ASan, so M_INITIALIZE_GWP_ASAN fails in the child run.
-pthread.pthread_attr_setinheritsched__takes_effect_despite_SCHED_RESET_ON_FORK  sched_setscheduler  FreeBSD has no SCHED_RESET_ON_FORK; sched_setscheduler gives EINVAL for a policy with that flag.
-pthread.pthread_mutex_pi_wakeup  setpriority  Test sets the nice value of one thread (FreeBSD nice is per process, K7) and reads the Linux priority from /proc/<tid>/stat.
+ifaddrs.getifaddrs_interfaces  abi:sys-class-net  Test compares the link entries with the symbolic links of /sys/class/net, and asysfs(4) has no /sys/class/net (register row 73).
 stdio.popen_socketpair_shutdown  tier0:toybox  Test runs uniq -c, a toybox program, which tier 0 does not build (plan M6). FreeBSD's uniq gives a count of 4 columns, not 7.
-stdio.tmpfile_TMPDIR  abi:o_tmpfile  The test expects "<TMPDIR path> (deleted)" from readlink of /proc/self/fd/<n>. FreeBSD has no O_TMPFILE (K11), so tmpfile() removes a named file, and the kernel keeps no name of a removed file: aprocfs gives "/#<inode> (deleted)".
-sys_mman.mremap_MREMAP_FIXED  mremap  FreeBSD has no mremap(2), so mremap() fails with ENOSYS until K10 and MREMAP_FIXED cannot move the mapping (G1 gap).
+stdio_ext.__fbufsize  abi:proc-blksize  stdio sizes the buffer from st_blksize; aprocfs gives 4096 for /proc/version, and Linux procfs gives 1024 (register row 74).
 sys_xattr.flistattr  flistxattr  extattr_list_fd(2) lists one name space in one call and in another format, so flistxattr() gives ENOTSUP (no one-call form).
 sys_xattr.flistattr_invalid_fd  flistxattr  flistxattr() gives ENOTSUP before any call, so a bad descriptor does not give EBADF.
 sys_xattr.flistattr_opath  flistxattr  As sys_xattr.flistattr.
 sys_xattr.fsetxattr_toosmallbuf  fgetxattr  extattr_get_fd(2) copies what fits into a short buffer and returns its length, as read(2) does; Linux gives ERANGE.
 sys_xattr.fsetxattr_with_opath_toosmall  fgetxattr  As sys_xattr.fsetxattr_toosmallbuf.
-unistd.gettid_works_after_clone_process_settid  clone  clone() gives EINVAL for CLONE_CHILD_SETTID on a process: the child would need a second call to store its thread id (K26).

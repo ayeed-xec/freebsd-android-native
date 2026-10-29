@@ -55,12 +55,12 @@ set(BUILTINS_LIB "" CACHE FILEPATH
     "libclang_rt.builtins-aarch64.a built from compiler-rt; empty: none")
 set(BIONIC_SYSROOT "/home/dev/build/sysroot-bionic-freebsd" CACHE PATH
     "bionic sysroot with libc++ (aosp/cmake/tier0/libcxx.cmake)")
-set(ZLIB_SRC "/usr/src/sys/contrib/zlib" CACHE PATH
-    "zlib sources: the copy in the FreeBSD tree")
 set(AOSP_EXTERNAL "/home/dev/aosp/external" CACHE PATH
-    "AOSP external/ checkout (jemalloc_new) at the pinned build")
-set(BIONIC_ALLOCATOR "jemalloc5" CACHE STRING
-    "Allocator of libc: jemalloc5 or tier0")
+    "AOSP external/ checkouts at the pinned build")
+set(SCUDO_SRC "${AOSP_EXTERNAL}/scudo" CACHE PATH
+    "scudo checkout with the FreeBSD platform patch")
+set(GWP_ASAN_SRC "${AOSP_EXTERNAL}/gwp_asan" CACHE PATH
+    "GWP-ASan checkout with the FreeBSD platform patch")
 
 find_program(AWK awk REQUIRED)
 
@@ -82,7 +82,7 @@ include_directories("${LIBC}")
 # makes unwind tables by default.  The -Wno-* flags in the last lines stop
 # warnings that clang 22 and the -Wundef of our clang configuration give,
 # and AOSP's clang does not.
-set(LIBC_FLAGS -D_LIBC=1 -Wextra -Wunused -Wno-char-subscripts
+set(LIBC_FLAGS -D_LIBC=1 -DUSE_SCUDO -Wextra -Wunused -Wno-char-subscripts
     -Wno-deprecated-declarations -Wno-gcc-compat -Wframe-larger-than=2048
     -Wno-reorder-init-list -fno-builtin -fasynchronous-unwind-tables
     $<$<COMPILE_LANGUAGE:C>:-std=gnu99>
@@ -94,7 +94,7 @@ set(LIBC_INCLUDES "${LIBC}/async_safe/include" "${LIBC}/platform"
     "${LIBC}/stdio" "${LIBC}/system_properties/include" "${PROPINFO}/include"
     "${BIONIC_SRC}/libstdc++/include" "${AOSP_SYSTEM}/core/libcutils/include"
     "${AOSP_SYSTEM}/logging/liblog/include"
-    "${AOSP_EXTERNAL}/jemalloc_new/include")
+    "${SCUDO_SRC}/standalone/include" "${GWP_ASAN_SRC}")
 
 function(libc_objects name)
 	cmake_parse_arguments(L "" "" "SRCS;FLAGS;INCLUDES" ${ARGN})
@@ -151,6 +151,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/bionic_arc4random.cpp"
         "${LIBC}/bionic/bionic_elf_tls.cpp"
         "${LIBC}/bionic/bionic_futex.cpp"
+        "${LIBC}/bionic/bionic_netlink.cpp"
         "${LIBC}/bionic/bionic_systrace.cpp"
         "${LIBC}/bionic/bionic_time_conversions.cpp"
         "${LIBC}/bionic/c32rtomb.cpp"
@@ -187,6 +188,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/gettid.cpp"
         "${LIBC}/bionic/heap_tagging.cpp"
         "${LIBC}/bionic/heap_zero_init.cpp"
+        "${LIBC}/bionic/ifaddrs.cpp"
         "${LIBC}/bionic/inotify_init.cpp"
         "${LIBC}/bionic/ioctl.cpp"
         "${LIBC}/bionic/isatty.cpp"
@@ -204,6 +206,8 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/mntent.cpp"
         "${LIBC}/bionic/new.cpp"
         "${LIBC}/bionic/NetdClientDispatch.cpp"
+        "${LIBC}/bionic/netdb.cpp"
+        "${LIBC}/bionic/net_if.cpp"
         "${LIBC}/bionic/netinet_in.cpp"
         "${LIBC}/bionic/open.cpp"
         "${LIBC}/bionic/pathconf.cpp"
@@ -260,9 +264,11 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/swab.cpp"
         "${LIBC}/bionic/symlink.cpp"
         "${LIBC}/bionic/sys_epoll.cpp"
+        "${LIBC}/bionic/sys_statvfs.cpp"
         "${LIBC}/bionic/sysconf.cpp"
         "${LIBC}/bionic/sysinfo.cpp"
         "${LIBC}/bionic/syslog.cpp"
+        "${LIBC}/bionic/sysprop_helpers.cpp"
         "${LIBC}/bionic/string.cpp"
         "${LIBC}/bionic/strtol.cpp"
         "${LIBC}/bionic/system_property_api.cpp"
@@ -279,6 +285,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/wcstod.cpp"
         "${LIBC}/stdio/fmemopen.cpp"
         "${LIBC}/stdio/stdio.cpp"
+        "${LIBC}/stdio/stdio_ext.cpp"
         "${LIBC}/stdio/parsefloat.c"
         "${LIBC}/stdio/vfscanf.cpp"
         "${LIBC}/stdio/vfwscanf.cpp"
@@ -323,6 +330,7 @@ libc_objects(libc_freebsd_port
         "${LIBC}/arch-arm64/bionic/syscall.S"
         "${LIBC}/arch-arm64/bionic/vfork.S"
         "${LIBC}/bionic/freebsd/__set_errno_from_freebsd.c"
+        "${LIBC}/bionic/freebsd/bsearch.c"
         "${LIBC}/bionic/freebsd/capability.c"
         "${LIBC}/bionic/freebsd/elf_aux_info.cpp"
         "${LIBC}/bionic/freebsd/getdents.c"
@@ -332,6 +340,7 @@ libc_objects(libc_freebsd_port
         "${LIBC}/bionic/freebsd/memfd_create.c"
         "${LIBC}/bionic/freebsd/mlock2.c"
         "${LIBC}/bionic/freebsd/mmap.c"
+        "${LIBC}/bionic/freebsd/mremap.c"
         "${LIBC}/bionic/freebsd/no_equivalent.c"
         "${LIBC}/bionic/freebsd/mprotect.c"
         "${LIBC}/bionic/freebsd/prctl.c"
@@ -356,55 +365,50 @@ set_source_files_properties(
 set_source_files_properties("${LIBC}/bionic/freebsd/statfs.c" PROPERTIES
     COMPILE_OPTIONS -Wframe-larger-than=4096)
 
-# jemalloc5 is built with the flags from its own Android.bp, plus the
-# FreeBSD overrides in jemalloc_freebsd_defs.h.  The malloc front end is
-# what libc/Android.bp builds; there is no GWP-ASan yet, see
-# gwp_asan_none.cpp.  BIONIC_ALLOCATOR=tier0 brings back the old simple
-# allocator until jemalloc5 passes bionic's malloc tests.
-set(JEMALLOC "${AOSP_EXTERNAL}/jemalloc_new")
-if(BIONIC_ALLOCATOR STREQUAL "jemalloc5")
-	set(JEMALLOC_SRCS arena background_thread base bin bitmap ckh ctl div
-	    extent extent_dss extent_mmap hash hooks jemalloc large log
-	    malloc_io mutex mutex_pool nstime pages prng prof rtree stats sz
-	    tcache ticker tsd witness)
-	list(TRANSFORM JEMALLOC_SRCS PREPEND "${JEMALLOC}/src/")
-	list(TRANSFORM JEMALLOC_SRCS APPEND ".c")
-	add_library(jemalloc5 OBJECT ${JEMALLOC_SRCS})
-	target_include_directories(jemalloc5 PRIVATE "${JEMALLOC}/src"
-	    "${JEMALLOC}/include")
-	target_compile_options(jemalloc5 PRIVATE
-	    -include "${CMAKE_CURRENT_SOURCE_DIR}/jemalloc_freebsd_defs.h"
-	    -D_GNU_SOURCE -D_REENTRANT
-	    -Wshorten-64-to-32 -Wsign-compare -Wno-format-zero-length
-	    -fvisibility=hidden -O3 -funroll-loops -Wno-unused-parameter
-	    -Wno-unused-function -Wno-missing-field-initializers
-	    -U_FORTIFY_SOURCE -DANDROID_ENABLE_TCACHE
-	    -DANDROID_LG_TCACHE_MAXCLASS_DEFAULT=16 -DANDROID_NUM_ARENAS=2
-	    -DANDROID_TCACHE_NSLOTS_SMALL_MAX=8 -DANDROID_TCACHE_NSLOTS_LARGE=16)
-	libc_objects(libc_jemalloc_wrapper
-	    SRCS "${LIBC}/bionic/jemalloc_wrapper.cpp"
-	    FLAGS -fvisibility=hidden)
-	set(MALLOC_COMMON "${LIBC}/bionic/android_mallopt.cpp"
-	    "${LIBC}/bionic/malloc_common.cpp" "${LIBC}/bionic/malloc_limit.cpp"
-	    "${LIBC}/bionic/freebsd/gwp_asan_none.cpp")
-	libc_objects(libc_malloc_static
-	    SRCS ${MALLOC_COMMON}
-	    FLAGS -DLIBC_STATIC)
-	libc_objects(libc_malloc_shared
-	    SRCS ${MALLOC_COMMON} "${LIBC}/bionic/malloc_common_dynamic.cpp"
-	        "${LIBC}/bionic/malloc_heapprofd.cpp")
-	set(MALLOC_STATIC $<TARGET_OBJECTS:jemalloc5>
-	    $<TARGET_OBJECTS:libc_jemalloc_wrapper>
-	    $<TARGET_OBJECTS:libc_malloc_static>)
-	set(MALLOC_SHARED $<TARGET_OBJECTS:jemalloc5>
-	    $<TARGET_OBJECTS:libc_jemalloc_wrapper>
-	    $<TARGET_OBJECTS:libc_malloc_shared>)
-else()
-	libc_objects(libc_malloc
-	    SRCS "${LIBC}/bionic/freebsd/malloc_bionic_allocator.cpp")
-	set(MALLOC_STATIC $<TARGET_OBJECTS:libc_malloc>)
-	set(MALLOC_SHARED $<TARGET_OBJECTS:libc_malloc>)
-endif()
+# The allocator sources and flags follow their Android.bp files.  The
+# malloc front end follows libc/Android.bp for static and shared libc.
+set(SCUDO_SRCS checksum common condition_variable_linux crc32_hw flags
+    flags_parser freebsd linux mem_map mem_map_linux release report
+    report_linux string_utils timing wrappers_c_bionic)
+list(TRANSFORM SCUDO_SRCS PREPEND "${SCUDO_SRC}/standalone/")
+list(TRANSFORM SCUDO_SRCS APPEND ".cpp")
+add_library(scudo OBJECT ${SCUDO_SRCS})
+target_include_directories(scudo PRIVATE "${LIBC}" "${SCUDO_SRC}/config"
+    "${SCUDO_SRC}/standalone/include" "${LIBC}/platform"
+    "${BIONIC_SRC}/libstdc++/include")
+# The compiler configuration adds -Wundef; Android's scudo flags do not.
+target_compile_options(scudo PRIVATE -std=gnu++20 -O3 -fno-rtti
+    -fno-stack-protector -nostdinc++ -fno-exceptions -mcrc
+    -Wall -Wextra -Wunused -Wno-unused-result -Wno-undef -Wconversion
+    -Werror=pointer-to-int-cast -Werror=int-to-pointer-cast
+    -Werror=thread-safety -Werror=type-limits -Werror
+    -DSCUDO_USE_CUSTOM_CONFIG -D_BIONIC=1
+    -DSCUDO_HAS_PLATFORM_TLS_SLOT -DSCUDO_MIN_ALIGNMENT_LOG=4
+    -DHAVE_ANDROID_UNSAFE_FRAME_POINTER_CHASE -DSCUDO_ENABLE_TRACING)
+set(GWP_ASAN_SRCS common crash_handler guarded_pool_allocator
+    platform_specific/common_posix
+    platform_specific/guarded_pool_allocator_posix
+    platform_specific/mutex_posix platform_specific/utilities_posix
+    stack_trace_compressor)
+list(TRANSFORM GWP_ASAN_SRCS PREPEND "${GWP_ASAN_SRC}/gwp_asan/")
+list(TRANSFORM GWP_ASAN_SRCS APPEND ".cpp")
+add_library(gwp_asan OBJECT ${GWP_ASAN_SRCS})
+target_include_directories(gwp_asan PRIVATE "${GWP_ASAN_SRC}"
+    "${BIONIC_SRC}/libstdc++/include")
+target_compile_options(gwp_asan PRIVATE -std=gnu++20 -nostdinc++
+    -fno-exceptions -fno-rtti -fno-emulated-tls)
+set(MALLOC_COMMON "${LIBC}/bionic/android_mallopt.cpp"
+    "${LIBC}/bionic/malloc_common.cpp" "${LIBC}/bionic/malloc_limit.cpp"
+    "${LIBC}/bionic/gwp_asan_wrappers.cpp"
+    "${LIBC}/bionic/android_unsafe_frame_pointer_chase.cpp")
+libc_objects(libc_malloc_static SRCS ${MALLOC_COMMON} FLAGS -DLIBC_STATIC)
+libc_objects(libc_malloc_shared SRCS ${MALLOC_COMMON}
+    "${LIBC}/bionic/malloc_common_dynamic.cpp"
+    "${LIBC}/bionic/malloc_heapprofd.cpp")
+set(MALLOC_STATIC $<TARGET_OBJECTS:scudo> $<TARGET_OBJECTS:gwp_asan>
+    $<TARGET_OBJECTS:libc_malloc_static>)
+set(MALLOC_SHARED $<TARGET_OBJECTS:scudo> $<TARGET_OBJECTS:gwp_asan>
+    $<TARGET_OBJECTS:libc_malloc_shared>)
 
 # libc_openbsd and libc_gdtoa: stdio internals, arc4random and dtoa.
 set(OPENBSD "${LIBC}/upstream-openbsd")
@@ -422,6 +426,11 @@ libc_objects(libc_openbsd
         "${OPENBSD}/lib/libc/locale/mbstowcs.c"
         "${OPENBSD}/lib/libc/locale/mbtowc.c"
         "${OPENBSD}/lib/libc/locale/wctob.c"
+        "${OPENBSD}/lib/libc/net/base64.c"
+        "${OPENBSD}/lib/libc/net/inet_ntoa.c"
+        "${OPENBSD}/lib/libc/net/inet_ntop.c"
+        "${OPENBSD}/lib/libc/net/inet_pton.c"
+        "${OPENBSD}/lib/libc/net/res_random.c"
         "${OPENBSD}/lib/libc/stdio/fgetwc.c"
         "${OPENBSD}/lib/libc/stdio/flags.c"
         "${OPENBSD}/lib/libc/stdio/fputwc.c"
@@ -509,6 +518,7 @@ libc_objects(libc_freebsd_ldexp
 libc_objects(libc_netbsd
     SRCS "${LIBC}/upstream-netbsd/common/lib/libc/stdlib/random.c"
         "${LIBC}/upstream-netbsd/lib/libc/gen/nice.c"
+        "${LIBC}/upstream-netbsd/lib/libc/inet/nsap_addr.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regcomp.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regerror.c"
         "${LIBC}/upstream-netbsd/lib/libc/regex/regexec.c"
@@ -517,6 +527,18 @@ libc_objects(libc_netbsd
         -include netbsd-compat.h
     INCLUDES "${LIBC}/upstream-netbsd/android/include"
         "${LIBC}/upstream-netbsd/lib/libc/include")
+
+# The complete resolver group, with the flags of libc_dns in Android.bp.
+file(GLOB_RECURSE LIBC_DNS_SRCS CONFIGURE_DEPENDS "${LIBC}/dns/*.c*")
+libc_objects(libc_dns
+    SRCS ${LIBC_DNS_SRCS}
+        "${LIBC}/upstream-netbsd/lib/libc/isc/ev_streams.c"
+        "${LIBC}/upstream-netbsd/lib/libc/isc/ev_timers.c"
+    FLAGS -DANDROID_CHANGES -DINET6 -Wno-unused-parameter
+        -include netbsd-compat.h -Wframe-larger-than=66000
+    INCLUDES "${LIBC}/dns/include" "${LIBC}/private"
+        "${LIBC}/upstream-netbsd/lib/libc/include"
+        "${LIBC}/upstream-netbsd/android/include")
 
 # libc_tzcode: time zones, strftime and strptime.
 libc_objects(libc_tzcode
@@ -536,6 +558,7 @@ libc_objects(libc_tzcode
 set(LIBC_COMMON "${GEN}/syscalls-arm64.S"
     $<TARGET_OBJECTS:libc_bootstrap>
     $<TARGET_OBJECTS:libc_bionic>
+    $<TARGET_OBJECTS:libc_dns>
     $<TARGET_OBJECTS:libc_grp_pwd>
     $<TARGET_OBJECTS:libc_fortify>
     $<TARGET_OBJECTS:libc_freebsd_port>
@@ -674,11 +697,7 @@ function(aosp_library name)
 	    "$<$<COMPILE_LANGUAGE:CXX>:${AOSP_CXX_FLAGS}>" ${L_FLAGS})
 endfunction()
 
-aosp_library(z
-    SRCS "${ZLIB_SRC}/adler32.c" "${ZLIB_SRC}/crc32.c"
-        "${ZLIB_SRC}/deflate.c" "${ZLIB_SRC}/inffast.c"
-        "${ZLIB_SRC}/inflate.c" "${ZLIB_SRC}/inftrees.c"
-        "${ZLIB_SRC}/trees.c" "${ZLIB_SRC}/zutil.c")
+include(zlib.cmake)
 # libbase has fmtlib in it (whole_static_libs), so programs that link base
 # get fmtlib too.
 set(FMTLIB "${AOSP_EXTERNAL}/fmtlib")
@@ -726,7 +745,7 @@ aosp_library(ziparchive
         -DINCFS_SUPPORT_DISABLED=1
         -Wno-missing-field-initializers -Wconversion -Wno-sign-conversion
     INCLUDES "${ZIPARCHIVE}/include" "${ZIPARCHIVE}/incfs_support/include"
-        "${LIBBASE}/include" "${LIBLOG}/include" "${ZLIB_SRC}")
+        "${LIBBASE}/include" "${LIBLOG}/include" "${ZLIB}")
 
 # linker64: linker_bin_template and linker_binary_defaults of
 # linker/Android.bp, with the linux_bionic choices (the debuggerd stub, no
@@ -925,5 +944,7 @@ test $rc -eq 134 && echo "$out" | grep -q 'stack corruption detected'
 if(EXISTS "${AOSP_EXTERNAL}/googletest/googletest/src/gtest-all.cc")
 	include(tests.cmake)
 	include(system-tests.cmake)
+	include(boringssl.cmake)
 	include(logd.cmake)
+	include(selinux.cmake)
 endif()

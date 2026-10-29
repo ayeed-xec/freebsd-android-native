@@ -40,4 +40,4 @@
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-TestUtilsTest.VerifyRunningWithScudo  tier0:scudo  Test looks for the scudo mappings in /proc/self/maps; the tier-0 libc uses jemalloc5, and FreeBSD has no names for anonymous memory ([anon:scudo:...]).
+TestUtilsTest.VerifyRunningWithScudo  abi:anon-vma-name  Scudo now runs, but FreeBSD has no names for anonymous memory. The test requires [anon:scudo:...] names in /proc/self/maps (register row X2).

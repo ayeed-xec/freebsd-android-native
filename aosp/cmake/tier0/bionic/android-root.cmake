@@ -35,6 +35,13 @@
 #   /system/build.prop                 the build-time properties
 #   /system/lib64/liblog.so            liblog
 #   /system/lib64/libnativehelper.so   libnativehelper
+#   /system/lib64/libz.so              zlib, the libz module of external/zlib
+#   /system/lib64/libcrypto.so         BoringSSL's libcrypto, FIPS
+#                                      (boringssl.cmake)
+#   /system/lib64/libselinux.so        libselinux, SELinux disabled
+#   /system/lib64/libpcre2.so          pcre2, for libselinux
+#   /system/lib64/libpackagelistparser.so
+#                                      for libselinux (selinux.cmake)
 #
 # On a device libnativehelper.so is in the ART APEX, and the linker
 # configuration makes it visible to the system namespace.  There is no
@@ -227,6 +234,12 @@ target_compile_options(log_shared PRIVATE -std=gnu++20 -D_FILE_OFFSET_BITS=64
     -DNDEBUG ${AOSP_CXX_FLAGS} -Wexit-time-destructors -DLIBLOG_LOG_TAG=1006
     -DSNET_EVENT_LOG_TAG=1397638484 -DANDROID_DEBUGGABLE=0)
 
+# libz.so: the libz module of external/zlib, from the objects of zlib.cmake.
+# It has no version script: libz.map.txt is the symbol file of the NDK stub
+# library only.
+system_library(z_shared SONAME libz.so SRCS $<TARGET_OBJECTS:zlib_objects>)
+set_target_properties(z_shared PROPERTIES OUTPUT_NAME libz)
+
 # libnativehelper.so: libnativehelper with libnativehelper_any_vm in it.
 # It is C (stl: "none") and needs only liblog.
 set(NATIVEHELPER_SRCS DlHelp.c ExpandableString.c JNIHelp.c JniInvocation.c
@@ -313,11 +326,19 @@ add_custom_target(android_root_platform ALL
         "${ROOT}/system/bin/sh"
     COMMAND "${CMAKE_COMMAND}" -E copy "${MKSH}/mkshrc"
         "${ROOT}/system/etc/mkshrc"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+        "${AOSP_SYSTEM}/core/rootdir/etc/hosts" "${ROOT}/system/etc/hosts"
     COMMAND "${CMAKE_COMMAND}" -E copy "${PROJECT_ROOT}/aosp/jail/build.prop"
         "${ROOT}/system/build.prop"
     COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:log_shared>
-        $<TARGET_FILE:nativehelper> "${ROOT}/system/lib64"
-    DEPENDS m_shared icuuc icui18n mksh log_shared nativehelper
+        $<TARGET_FILE:nativehelper> $<TARGET_FILE:z_shared>
+        "${GEN}/libcrypto.so" $<TARGET_FILE:selinux_shared>
+        $<TARGET_FILE:pcre2_shared> $<TARGET_FILE:packagelistparser_shared>
+        "${ROOT}/system/lib64"
+    DEPENDS m_shared icuuc icui18n mksh log_shared nativehelper z_shared
+        "${GEN}/libcrypto.so" selinux_shared pcre2_shared
+        packagelistparser_shared
         "${MKSH}/mkshrc" "${PROJECT_ROOT}/aosp/jail/build.prop"
+        "${AOSP_SYSTEM}/core/rootdir/etc/hosts"
     VERBATIM)
 add_dependencies(android_root_platform android_root)

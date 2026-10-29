@@ -35,9 +35,8 @@
 #
 # The .excluded file of each suite names the tests that the run leaves
 # out.  It also names the tests of the files that are not built yet:
-# CallStack_test.cpp needs libunwindstack, sched_policy_test.cpp needs
-# libprocessgroup and sockets_test.cpp needs the resolver of the libc
-# (getaddrinfo).  The libcutils files that include <linux/ioprio.h> or
+# CallStack_test.cpp needs libunwindstack and sched_policy_test.cpp needs
+# libprocessgroup.  The libcutils files that include <linux/ioprio.h> or
 # <linux/netlink.h>, and their tests, wait for those linux-compat headers
 # of bionic-freebsd.
 
@@ -186,12 +185,11 @@ system_test(liblog-unit-tests
     LIBS gtest_isolated_main gtest_isolated cutils
     FLAGS -fstack-protector-all -g -Wall -Wextra -Werror -fno-builtin)
 
-# sched_policy_test.cpp is left out until libprocessgroup is built, and
-# sockets_test.cpp until the libc has getaddrinfo(3).
+# sched_policy_test.cpp is left out until libprocessgroup is built.
 set(LIBCUTILS_TEST_SRCS native_handle_test.cpp properties_test.cpp
     android_get_control_file_test.cpp android_get_control_socket_test.cpp
     fs_config_test.cpp multiuser_test.cpp str_parms_test.cpp
-    trace-dev_test.cpp ashmem_base_test.cpp ashmem_test.cpp)
+    trace-dev_test.cpp ashmem_base_test.cpp ashmem_test.cpp sockets_test.cpp)
 list(TRANSFORM LIBCUTILS_TEST_SRCS PREPEND "${LIBCUTILS}/")
 system_test(libcutils_test
     SRCS ${LIBCUTILS_TEST_SRCS}
@@ -258,3 +256,26 @@ foreach(suite libbase_test liblog-unit-tests libcutils_test libutils_test)
 	set_tests_properties(${t} PROPERTIES
 	    ENVIRONMENT "LD_LIBRARY_PATH=${GEN};${RUN_SUITE_PATH}")
 endforeach()
+
+# zlib_tests: the cc_test of external/zlib, with libz.so and the static
+# zlib_google_compression_utils_portable of libz_defaults.  Its files
+# include "gtest.h", so googletest's include/gtest is on the include path,
+# as in the Android.bp.  Its cflags have no -Werror, and infcover.cc has an
+# unused variable, so -Wno-error.  Android runs it in one process and not
+# as root, so its tests run one at a time (-s) as the calling user.
+aosp_library(zlib_google_compression_utils_portable
+    SRCS "${ZLIB}/google/compression_utils_portable.cc"
+    FLAGS ${ZLIB_FLAGS}
+    INCLUDES "${ZLIB}" "${ZLIB}/google")
+system_test(zlib_tests
+    SRCS "${ZLIB}/contrib/tests/infcover.cc"
+        "${ZLIB}/contrib/tests/utils_unittest.cc"
+    LIBS gtest_main zlib_google_compression_utils_portable z_shared
+    FLAGS -DCMAKE_STANDALONE_UNITTESTS -Wno-unused-parameter -Wno-error
+    INCLUDES "${ZLIB}" "${ZLIB}/google" "${GTEST}/include/gtest")
+add_test(NAME zlib_tests COMMAND ${RUN_SUITE}
+    -j "${GEN}/bionic-tests-jail.conf" -s
+    "${CMAKE_CURRENT_SOURCE_DIR}/zlib_tests.excluded"
+    "$<TARGET_FILE:linker64>" "$<TARGET_FILE:zlib_tests>")
+set_tests_properties(zlib_tests PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${GEN};${RUN_SUITE_PATH}")
