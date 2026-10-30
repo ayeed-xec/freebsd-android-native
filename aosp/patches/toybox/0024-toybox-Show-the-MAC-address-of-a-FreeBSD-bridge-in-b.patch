@@ -1,0 +1,51 @@
+From 937d1a0e9751101a84ca8988b4d7880692e64cd9 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 20:35:18 +0530
+Subject: [PATCH] toybox: Show the MAC address of a FreeBSD bridge in brctl
+ show
+
+FreeBSD puts a MAC address in the bridge id of BRDGPARAM only while
+the spanning tree runs; else the id is the priority alone, and brctl
+show gave 8000.000000000000.  Linux shows the MAC address of the bridge.
+When the id has no MAC address, take the one of the AF_LINK entry of the
+bridge.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/brctl.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/toys/pending/brctl.c b/toys/pending/brctl.c
+index c99d9b8..5956215 100644
+--- a/toys/pending/brctl.c
++++ b/toys/pending/brctl.c
+@@ -87,6 +87,7 @@ void br_show(char **argv)
+   struct ifaddrs *ifs, *ifa;
+   struct ifbropreq op;
+   struct ifbreq *ports;
++  unsigned long long mac;
+   int i, n, stp;
+ 
+   if (getifaddrs(&ifs)) perror_exit("getifaddrs");
+@@ -100,11 +101,13 @@ void br_show(char **argv)
+     n = get_ports(ifa->ifa_name, &ports);
+     for (i = stp = 0; i < n; i++) stp |= ports[i].ifbr_ifsflags & IFBIF_STP;
+ 
+-    // The bridge id is the priority and then the MAC address.
++    // The bridge id is the priority and then a MAC address. FreeBSD puts the
++    // MAC address in it only while STP runs; else show the bridge's own.
++    if (!(mac = op.ifbop_bridgeid & 0xffffffffffffULL))
++      for (i = 0; i < sdl->sdl_alen; i++)
++        mac = mac<<8 | ((unsigned char *)LLADDR(sdl))[i];
+     printf("%s\t\t%.4x.%.12llx\t%s\t\t", ifa->ifa_name,
+-      (unsigned)(op.ifbop_bridgeid>>48),
+-      (unsigned long long)op.ifbop_bridgeid & 0xffffffffffffULL,
+-      stp ? "yes" : "no");
++      (unsigned)(op.ifbop_bridgeid>>48), mac, stp ? "yes" : "no");
+     for (i = 0; i < n; i++)
+       printf("%s%s", i ? "\n\t\t\t\t\t\t\t" : "", ports[i].ifbr_ifsname);
+     xputc('\n');
+-- 
+2.50.1 (Apple Git-155)
+

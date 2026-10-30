@@ -1,0 +1,418 @@
+From 931f76ffbc63a591b670f3a568738473c9a25b63 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:28:13 +0530
+Subject: [PATCH] toybox: Use the FreeBSD interface ioctls in ifconfig
+
+ifconfig uses Linux socket ioctls, the Linux members of struct ifreq
+and /proc/net/dev.  FreeBSD has the same facilities with its own
+interface:
+
+- The link type and the hardware address of an interface are in its
+  AF_LINK entry of getifaddrs(), with the FreeBSD IFT_* type.
+- FreeBSD sets an IPv4 address with its mask and broadcast or
+  destination address in one SIOCAIFADDR, and no longer takes
+  SIOCSIFADDR.  A new address replaces the first one (SIOCDIFADDR with
+  INADDR_ANY), as FreeBSD's ifconfig does.  netmask, broadcast,
+  pointopoint and dstaddr keep the address and change one part, and
+  "default" deletes it.
+- add and del use SIOCAIFADDR_IN6 and SIOCDIFADDR_IN6.
+- hw ether uses SIOCSIFLLADDR, rename SIOCSIFNAME, and mtu and metric
+  the same ioctls as Linux.
+- The flags are in two halves.  promisc and allmulti are the user
+  modes IFF_PPROMISC and IFF_PALLMULTI.  The flag names are FreeBSD's.
+- The interface list comes from if_nameindex(), because the SIOCGIFCONF
+  entries of FreeBSD have different sizes.  The packet counters of
+  /proc/net/dev need aprocfs to give that file.
+
+FreeBSD has no transmit queue length, no interface map, no keepalive or
+outfill and no infiniband hardware address, and the driver sets the
+multicast, broadcast and point-to-point flags.  These options fail with
+EOPNOTSUPP.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ifconfig.c | 260 ++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 252 insertions(+), 8 deletions(-)
+
+diff --git a/toys/net/ifconfig.c b/toys/net/ifconfig.c
+index e215508..afa0ec4 100644
+--- a/toys/net/ifconfig.c
++++ b/toys/net/ifconfig.c
+@@ -55,8 +55,15 @@ config IFCONFIG
+ #define FOR_ifconfig
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++#include <ifaddrs.h>
++#include <net/if_dl.h>
++#include <net/if_types.h>
++#include <netinet6/in6_var.h>
++#else
+ #include <net/if_arp.h>
+ #include <net/ethernet.h>
++#endif
+ 
+ GLOBALS(
+   int sockfd;
+@@ -107,11 +114,18 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+     int type;
+     char *title;
+   } types[] = {
++#ifdef __FreeBSD__
++    {IFT_LOOP, "Local Loopback"}, {IFT_ETHER, "Ethernet"},
++    {IFT_PPP, "Point-to-Point Protocol"}, {IFT_INFINIBAND, "InfiniBand"},
++    {IFT_GIF, "IPv6-in-IPv4"}, {-1, "UNSPEC"}
++#else
+     {ARPHRD_LOOPBACK, "Local Loopback"}, {ARPHRD_ETHER, "Ethernet"},
+     {ARPHRD_PPP, "Point-to-Point Protocol"}, {ARPHRD_INFINIBAND, "InfiniBand"},
+     {ARPHRD_SIT, "IPv6-in-IPv4"}, {-1, "UNSPEC"}
++#endif
+   };
+-  int i;
++  int i, hwtype = 0;
++  unsigned char hw[6] = {0};
+   char *pp;
+   FILE *fp;
+   short flags;
+@@ -135,18 +149,41 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+   }
+ 
+   // Query hardware type and hardware address.
++#ifdef __FreeBSD__
++  // FreeBSD gives them in the AF_LINK entry of the interface.
++  {
++    struct ifaddrs *ifas, *ifa;
++
++    if (!getifaddrs(&ifas)) {
++      for (ifa = ifas; ifa; ifa = ifa->ifa_next) {
++        struct sockaddr_dl *sdl = (void *)ifa->ifa_addr;
++
++        if (sdl && sdl->sdl_family == AF_LINK && !strcmp(ifa->ifa_name, name)) {
++          hwtype = sdl->sdl_type;
++          if (sdl->sdl_alen == 6) memcpy(hw, LLADDR(sdl), 6);
++          break;
++        }
++      }
++      freeifaddrs(ifas);
++    }
++  }
++#else
+   // Not xioctl because you don't have permission for this on Android.
+   ioctl(TT.sockfd, SIOCGIFHWADDR, &ifre);
++  hwtype = ifre.ifr_hwaddr.sa_family;
++  memcpy(hw, ifre.ifr_hwaddr.sa_data, 6);
++#endif
+ 
+   if (FLAG(S))
+-    for (i=0; i<6; i++) printf(":%02x"+!i, ifre.ifr_hwaddr.sa_data[i]);
++    for (i=0; i<6; i++) printf(":%02x"+!i, hw[i]);
+   else {
+     for (i=0; i < ARRAY_LEN(types)-1; i++)
+-      if (ifre.ifr_hwaddr.sa_family == types[i].type) break;
++      if (hwtype == types[i].type) break;
+     xprintf("%-9s Link encap:%s  ", name, types[i].title);
+-    if(ifre.ifr_hwaddr.sa_family == ARPHRD_ETHER) {
++    // Ethernet
++    if (hwtype == types[1].type) {
+       xprintf("HWaddr ");
+-      for (i=0; i<6; i++) xprintf(":%02x"+!i, ifre.ifr_hwaddr.sa_data[i]);
++      for (i=0; i<6; i++) xprintf(":%02x"+!i, hw[i]);
+     }
+     sprintf(toybuf, "/sys/class/net/%.15s/device/driver", name);
+     if (readlink0(toybuf, toybuf, sizeof(toybuf))>0)
+@@ -182,9 +219,15 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+       if (!addr[i].flag || (flags & addr[i].flag)) {
+         if (addr[i].ioctl && ioctl(TT.sockfd, addr[i].ioctl, &ifre))
+           si->sin_family = 0;
++#ifdef __FreeBSD__
++        // sa_family_t is one byte on FreeBSD.
++        xprintf(" %s:%s ", addr[i].name,
++          !si->sin_family ? "[NOT SET]" : inet_ntoa(si->sin_addr));
++#else
+         xprintf(" %s:%s ", addr[i].name,
+           (si->sin_family == 0xFFFF || !si->sin_family)
+             ? "[NOT SET]" : inet_ntoa(si->sin_addr));
++#endif
+       }
+     }
+ 
+@@ -242,13 +285,20 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+   if (flags) {
+     unsigned short mask = 1;
+     char **s, *str[] = {
++#ifdef __FreeBSD__
++      // The FreeBSD flags, as its ifconfig names them; bit 5 has no name.
++      "UP", "BROADCAST", "DEBUG", "LOOPBACK", "POINTOPOINT", "", "RUNNING",
++      "NOARP", "PROMISC", "ALLMULTI", "OACTIVE", "SIMPLEX", "LINK0", "LINK1",
++      "LINK2", "MULTICAST", NULL
++#else
+       "UP", "BROADCAST", "DEBUG", "LOOPBACK", "POINTOPOINT", "NOTRAILERS",
+       "RUNNING", "NOARP", "PROMISC", "ALLMULTI", "MASTER", "SLAVE", "MULTICAST",
+       "PORTSEL", "AUTOMEDIA", "DYNAMIC", "LOWER_UP", "DORMANT", "ECHO", NULL
++#endif
+     };
+ 
+     for (s = str; *s; s++) {
+-      if (flags & mask) xprintf("%s ", *s);
++      if ((flags & mask) && **s) xprintf("%s ", *s);
+       mask <<= 1;
+     }
+   } else xprintf("[NO FLAGS] ");
+@@ -270,8 +320,13 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+     int i;
+ 
+     // Query txqueuelen
++#ifdef __FreeBSD__
++    // FreeBSD has no transmit queue length of an interface.
++    val[16] = -1;
++#else
+     if (ioctl(TT.sockfd, SIOCGIFTXQLEN, &ifre) >= 0) val[16] = ifre.ifr_qlen;
+     else val[16] = -1;
++#endif
+ 
+     for (i = 0; i<sizeof(order); i++) {
+       int j = order[i];
+@@ -282,6 +337,8 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+   }
+   xputc('\n');
+ 
++#ifndef __FreeBSD__
++  // FreeBSD has no interrupt, port or memory map of an interface.
+   if(!ioctl(TT.sockfd, SIOCGIFMAP, &ifre) && (ifre.ifr_map.irq ||
+       ifre.ifr_map.mem_start || ifre.ifr_map.dma || ifre.ifr_map.base_addr))
+   {
+@@ -294,6 +351,7 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+     if(ifre.ifr_map.dma) xprintf("DMA chan:%x ", ifre.ifr_map.dma);
+     xputc('\n');
+   }
++#endif
+   xputc('\n');
+ }
+ 
+@@ -304,9 +362,14 @@ static void show_iface(char *iface_name)
+   int i, j;
+   FILE *fp;
+ 
++#ifdef __FreeBSD__
++  // The counters of /proc/net/dev need aprocfs to have the file.
++  fp = fopen("/proc/net/dev", "r");
++#else
+   fp = xfopen("/proc/net/dev", "r");
++#endif
+ 
+-  for (i=0; fgets(toybuf, sizeof(toybuf), fp); i++) {
++  for (i=0; fp && fgets(toybuf, sizeof(toybuf), fp); i++) {
+     char *buf = toybuf;
+     unsigned long long val[17];
+ 
+@@ -335,9 +398,23 @@ static void show_iface(char *iface_name)
+       display_ifconfig(sl->str, FLAG(a), val);
+     }
+   }
+-  fclose(fp);
++  if (fp) fclose(fp);
+ 
+   if (iface_name) display_ifconfig(iface_name, 1, 0);
++#ifdef __FreeBSD__
++  // The SIOCGIFCONF entries of FreeBSD have different sizes: take each
++  // interface of if_nameindex().
++  else {
++    struct if_nameindex *ni = if_nameindex(), *nn;
++
++    for (nn = ni; nn && nn->if_name; nn++) {
++      for (sl = ifaces; sl; sl = sl->next)
++        if (!strcmp(sl->str, nn->if_name)) break;
++      if (!sl) display_ifconfig(nn->if_name, FLAG(a), 0);
++    }
++    if (ni) if_freenameindex(ni);
++  }
++#else
+   else {
+     struct ifconf ifcon;
+     struct ifreq *ifre;
+@@ -364,10 +441,176 @@ static void show_iface(char *iface_name)
+ 
+     free(ifcon.ifc_buf);
+   }
++#endif
+ 
+   llist_traverse(ifaces, free);
+ }
+ 
++#ifdef __FreeBSD__
++// FreeBSD sets an IPv4 address with its mask and its broadcast or
++// destination address in one SIOCAIFADDR, and no longer takes SIOCSIFADDR.
++// A new address replaces the first one, as FreeBSD's ifconfig does; netmask,
++// broadcast and the destination keep the address and change one part.
++static void bsd_inet(struct ifreq *ifre, char *what, char *arg)
++{
++  struct ifaliasreq ifra;
++  struct sockaddr_in *sin[3] = {(void *)&ifra.ifra_addr,
++    (void *)&ifra.ifra_mask, (void *)&ifra.ifra_broadaddr};
++  int mask, part = !what ? 0 : strcmp(what, "netmask") ? 2 : 1;
++
++  memset(&ifra, 0, sizeof(ifra));
++  xstrncpy(ifra.ifra_name, ifre->ifr_name, IFNAMSIZ);
++  if (part) {
++    xioctl(TT.sockfd, SIOCGIFADDR, ifre);
++    memcpy(sin[0], &ifre->ifr_addr, sizeof(*sin[0]));
++    if (!ioctl(TT.sockfd, SIOCGIFNETMASK, ifre))
++      memcpy(sin[1], &ifre->ifr_addr, sizeof(*sin[1]));
++  } else {
++    // An address of INADDR_ANY deletes the first address.
++    memset(&ifre->ifr_addr, 0, sizeof(ifre->ifr_addr));
++    if (ioctl(TT.sockfd, SIOCDIFADDR, ifre) && errno != EADDRNOTAVAIL)
++      perror_exit_raw(ifre->ifr_name);
++    if (!strcmp(arg, "default")) return;
++  }
++  sin[part]->sin_len = sizeof(struct sockaddr_in);
++  sin[part]->sin_family = AF_INET;
++  mask = get_addrinfo(arg, AF_INET, &sin[part]->sin_addr);
++  if (!part && mask >= 0) {
++    sin[1]->sin_len = sizeof(struct sockaddr_in);
++    sin[1]->sin_family = AF_INET;
++    sin[1]->sin_addr.s_addr = mask ? htonl(~0U<<(32-mask)) : 0;
++  }
++  xioctl(TT.sockfd, SIOCAIFADDR, &ifra);
++}
++
++// FreeBSD keeps the flags of an interface in two halves. Promiscuous and
++// all-multicast modes that a user asks for are IFF_PPROMISC and
++// IFF_PALLMULTI.
++static void bsd_flags(struct ifreq *ifre, int on, int off)
++{
++  int flags;
++
++  xioctl(TT.sockfd, SIOCGIFFLAGS, ifre);
++  flags = (ifre->ifr_flags&0xffff) | (ifre->ifr_flagshigh<<16);
++  flags = (flags & ~off) | on;
++  ifre->ifr_flags = flags&0xffff;
++  ifre->ifr_flagshigh = flags>>16;
++  xioctl(TT.sockfd, SIOCSIFFLAGS, ifre);
++}
++
++// FreeBSD adds and deletes an IPv6 address with SIOCAIFADDR_IN6 and
++// SIOCDIFADDR_IN6, without a time limit.
++static void bsd_inet6(char *name, int add, char *arg)
++{
++  struct in6_aliasreq ifra;
++  struct sockaddr_in6 *sin6 = &ifra.ifra_addr, *mask = &ifra.ifra_prefixmask;
++  int i, plen, fd6 = xsocket(AF_INET6, SOCK_DGRAM, 0);
++
++  memset(&ifra, 0, sizeof(ifra));
++  xstrncpy(ifra.ifra_name, name, IFNAMSIZ);
++  sin6->sin6_len = mask->sin6_len = sizeof(struct sockaddr_in6);
++  sin6->sin6_family = mask->sin6_family = AF_INET6;
++  if ((plen = get_addrinfo(arg, AF_INET6, &sin6->sin6_addr)) < 0) plen = 128;
++  if (add) {
++    for (i = 0; i<16; i++, plen -= 8)
++      mask->sin6_addr.s6_addr[i] = plen>=8 ? 0xff : plen>0 ? 0xff<<(8-plen) : 0;
++    ifra.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
++    ifra.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
++    xioctl(fd6, SIOCAIFADDR_IN6, &ifra);
++  } else {
++    struct in6_ifreq ifr6;
++
++    memset(&ifr6, 0, sizeof(ifr6));
++    xstrncpy(ifr6.ifr_name, name, IFNAMSIZ);
++    ifr6.ifr_ifru.ifru_addr = *sin6;
++    xioctl(fd6, SIOCDIFADDR_IN6, &ifr6);
++  }
++  close(fd6);
++}
++
++void ifconfig_main(void)
++{
++  char **argv = toys.optargs;
++  struct ifreq ifre;
++  struct {
++    char *name;
++    int on, off;
++  } flag[] = {{"up", IFF_UP, 0}, {"down", 0, IFF_UP}, {"arp", 0, IFF_NOARP},
++    {"promisc", IFF_PPROMISC, 0}, {"allmulti", IFF_PALLMULTI, 0}};
++  // Options of Linux that FreeBSD has no facility for. The driver sets the
++  // multicast, broadcast and point-to-point flags.
++  char *none[] = {"txqueuelen", "mem_start", "io_addr", "irq", "keepalive",
++    "outfill", "multicast", "pointopoint", "broadcast"};
++  int i;
++
++  TT.sockfd = xsocket(AF_INET, SOCK_DGRAM, 0);
++  if (toys.optc < 2) {
++    show_iface(*argv);
++    return;
++  }
++
++  memset(&ifre, 0, sizeof(struct ifreq));
++  xstrncpy(ifre.ifr_name, *argv, IFNAMSIZ);
++
++  while (*++argv) {
++    char *s = *argv;
++    int rev = (*s == '-');
++
++    s += rev;
++    for (i = 0; i<ARRAY_LEN(flag); i++) if (!strcmp(s, flag[i].name)) break;
++    if (i<ARRAY_LEN(flag)) {
++      bsd_flags(&ifre, rev ? flag[i].off : flag[i].on,
++        rev ? flag[i].on : flag[i].off);
++    } else if (!rev && (isdigit(*s) || !strcmp(s, "default"))) {
++      bsd_inet(&ifre, 0, s);
++      bsd_flags(&ifre, IFF_UP, 0);
++    } else if (!strcmp(s, "inet") || !strcmp(s, "inet6")) continue;
++    else if (!strcmp(s, "add") || !strcmp(s, "del")) {
++      if (!argv[1]) help_exit("%s", s);
++      bsd_inet6(ifre.ifr_name, *s=='a', *++argv);
++    } else if (!strcmp(s, "hw")) {
++      unsigned mac[6];
++      int len = 0;
++
++      if (!argv[1] || !argv[2]) help_exit("bad hw");
++      if (strcmp(argv[1], "ether")) {
++        errno = EOPNOTSUPP;
++        perror_exit("hw %s", argv[1]);
++      }
++      argv += 2;
++      if (sscanf(*argv, "%2x:%2x:%2x:%2x:%2x:%2x%n", mac, mac+1, mac+2,
++          mac+3, mac+4, mac+5, &len) != 6 || (*argv)[len])
++        error_exit("bad hw-addr '%s'", *argv);
++      memset(&ifre.ifr_addr, 0, sizeof(ifre.ifr_addr));
++      ifre.ifr_addr.sa_len = 6;
++      ifre.ifr_addr.sa_family = AF_LINK;
++      for (i = 0; i<6; i++) ifre.ifr_addr.sa_data[i] = mac[i];
++      xioctl(TT.sockfd, SIOCSIFLLADDR, &ifre);
++    } else if (!rev && (!strcmp(s, "netmask") || !strcmp(s, "dstaddr")
++        || !strcmp(s, "broadcast") || !strcmp(s, "pointopoint")
++        || !strcmp(s, "mtu") || !strcmp(s, "metric") || !strcmp(s, "rename")))
++    {
++      if (!*++argv) error_exit("%s needs argument", s);
++      if (strchr("bdnp", *s)) bsd_inet(&ifre, s, *argv);
++      else if (*s=='r') {
++        ifre.ifr_data = *argv;
++        xioctl(TT.sockfd, SIOCSIFNAME, &ifre);
++        xstrncpy(ifre.ifr_name, *argv, IFNAMSIZ);
++      } else {
++        if (s[1]=='t') ifre.ifr_mtu = atolx(*argv);
++        else ifre.ifr_metric = atolx(*argv);
++        xioctl(TT.sockfd, s[1]=='t' ? SIOCSIFMTU : SIOCSIFMETRIC, &ifre);
++      }
++    } else {
++      for (i = 0; i<ARRAY_LEN(none); i++) if (!strcmp(s, none[i])) break;
++      if (i == ARRAY_LEN(none)) help_exit("bad argument '%s'", *argv);
++      errno = EOPNOTSUPP;
++      perror_exit("%s", s);
++    }
++  }
++  close(TT.sockfd);
++}
++#else
+ // Encode offset and size of field into an int, and make result negative
+ #define IFREQ_OFFSZ(x) -(int)((offsetof(struct ifreq, x)<<16) + sizeof(ifre.x))
+ 
+@@ -557,3 +800,4 @@ void ifconfig_main(void)
+   }
+   close(TT.sockfd);
+ }
++#endif
+-- 
+2.50.1 (Apple Git-155)
+

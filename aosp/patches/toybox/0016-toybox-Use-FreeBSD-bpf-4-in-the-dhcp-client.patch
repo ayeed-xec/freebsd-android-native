@@ -1,0 +1,290 @@
+From eaac91d2ea04dfd4b12f183ea80edce0c250752d Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:50:31 +0530
+Subject: [PATCH] toybox: Use FreeBSD bpf(4) in the dhcp client
+
+Before it has an address, dhcp sends and receives IP packets on a Linux
+packet socket with a socket filter.  FreeBSD has no packet socket.  Its
+bpf(4) device reads and writes the frames of an interface, with their
+Ethernet header, and runs the same filter language.  On FreeBSD, dhcp
+opens /dev/bpf on the interface with the filter at the Ethernet offsets.
+It writes each request with an Ethernet header to the broadcast address,
+and the kernel puts in the source address.
+
+One read of bpf(4) gives each frame that the device has.  dhcp uses the
+first DHCP reply to this client in the read and drops the rest, as a
+full socket buffer would.  The check of each IP packet is now a function
+that both systems use.
+
+FreeBSD gives the MAC address of the interface in its AF_LINK entry.  It
+has no SO_BINDTODEVICE, so after dhcp has an address, its UDP socket gets
+replies on each interface.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/dhcp.c | 143 ++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 137 insertions(+), 6 deletions(-)
+
+diff --git a/toys/pending/dhcp.c b/toys/pending/dhcp.c
+index 2c77720..1794f64 100644
+--- a/toys/pending/dhcp.c
++++ b/toys/pending/dhcp.c
+@@ -53,10 +53,17 @@ config DHCP
+ // TODO: headers not in posix:
+ #include <netinet/ip.h>
+ #include <netinet/udp.h>
++#ifdef __FreeBSD__
++#include <ifaddrs.h>
++#include <net/bpf.h>
++#include <net/ethernet.h>
++#include <net/if_dl.h>
++#else
+ #include <netpacket/packet.h>
+ 
+ #include <linux/filter.h> //FIXME: linux specific. fix for other OS ports
+ #include <linux/if_ether.h>
++#endif
+ 
+ GLOBALS(
+     char *iface;
+@@ -239,6 +246,41 @@ static option_val_t options_list[] = {
+     {"msstaticroutes" , DHCP_STCRTS | 0xf9, NULL, 0},
+ };
+ 
++#ifdef __FreeBSD__
++// The frames of bpf(4) start with the Ethernet header.
++static struct bpf_insn filter_instr[] = {
++    BPF_STMT(BPF_LD|BPF_H|BPF_ABS, 12),
++    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, ETHERTYPE_IP, 0, 8),
++    BPF_STMT(BPF_LD|BPF_B|BPF_ABS, 14+9),
++    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, IPPROTO_UDP, 0, 6),
++    BPF_STMT(BPF_LD|BPF_H|BPF_ABS, 14+6),
++    BPF_JUMP(BPF_JMP|BPF_JSET|BPF_K, 0x1fff, 4, 0),
++    BPF_STMT(BPF_LDX|BPF_B|BPF_MSH, 14), BPF_STMT(BPF_LD|BPF_H|BPF_IND, 14+2),
++    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, 68, 0, 1),
++    BPF_STMT(BPF_RET|BPF_K, 0xffffffff), BPF_STMT(BPF_RET|BPF_K, 0),
++};
++
++// FreeBSD has no packet socket. bpf(4) reads and writes the frames of the
++// interface, and a read must use the size of its buffer.
++static int open_bpf(void)
++{
++  struct bpf_program prog = {ARRAY_LEN(filter_instr), filter_instr};
++  struct ifreq ifr;
++  unsigned len = sizeof(toybuf), on = 1;
++  int fd = open("/dev/bpf", O_RDWR|O_CLOEXEC);
++
++  memset(&ifr, 0, sizeof(ifr));
++  xstrncpy(ifr.ifr_name, state->iface, IFNAMSIZ);
++  if (fd != -1 && (ioctl(fd, BIOCSBLEN, &len) || len != sizeof(toybuf)
++      || ioctl(fd, BIOCSETIF, &ifr) || ioctl(fd, BIOCIMMEDIATE, &on)
++      || ioctl(fd, BIOCSETF, &prog))) {
++    close(fd);
++    fd = -1;
++  }
++
++  return fd;
++}
++#else
+ static  struct sock_filter filter_instr[] = {
+     BPF_STMT(BPF_LD|BPF_B|BPF_ABS, 9),
+     BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, IPPROTO_UDP, 0, 6),
+@@ -253,6 +295,7 @@ static  struct sock_fprog filter_prog = {
+     .len = ARRAY_LEN(filter_instr),
+     .filter = (struct sock_filter *) filter_instr,
+ };
++#endif
+ 
+ // calculate options size.
+ static int dhcp_opt_size(uint8_t *optionptr)
+@@ -301,13 +344,31 @@ static int get_interface( char *interface, int *ifindex, uint32_t *oip, uint8_t
+     *oip = ntohl(ip->sin_addr.s_addr);
+   }
+   if (ifindex) {
++#ifdef __FreeBSD__
++    *ifindex = if_nametoindex(interface);
++#else
+     xioctl(fd, SIOCGIFINDEX, &req);
+     dbg("Adapter index %d\n", req.ifr_ifindex);
+     *ifindex = req.ifr_ifindex;
++#endif
+   }
+   if (mac) {
++#ifdef __FreeBSD__
++    // FreeBSD gives the MAC address in the AF_LINK entry of the interface.
++    struct ifaddrs *ifs, *ifa;
++
++    if (getifaddrs(&ifs)) perror_exit("getifaddrs");
++    for (ifa = ifs; ifa; ifa = ifa->ifa_next) {
++      struct sockaddr_dl *sdl = (void *)ifa->ifa_addr;
++
++      if (sdl && sdl->sdl_family == AF_LINK && sdl->sdl_alen == 6
++          && !strcmp(ifa->ifa_name, interface)) memcpy(mac, LLADDR(sdl), 6);
++    }
++    freeifaddrs(ifs);
++#else
+     xioctl(fd, SIOCGIFHWADDR, &req);
+     memcpy(mac, req.ifr_hwaddr.sa_data, 6);
++#endif
+     dbg("MAC %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+   }
+   close(fd);
+@@ -584,6 +645,20 @@ static uint32_t getxid(void)
+ }
+ 
+ // opens socket in raw mode.
++#ifdef __FreeBSD__
++static int mode_raw(void)
++{
++  state->mode = MODE_OFF;
++  if (state->sockfd > 0) close(state->sockfd);
++  if ((state->sockfd = open_bpf()) < 0) {
++    dbg("MODE RAW : bpf fail.\n");
++    return -1;
++  }
++  state->mode = MODE_RAW;
++  dbg("MODE RAW : success\n");
++  return 0;
++}
++#else
+ static int mode_raw(void)
+ {
+   state->mode = MODE_OFF;
+@@ -615,6 +690,7 @@ static int mode_raw(void)
+   dbg("MODE RAW : success\n");
+   return 0;
+ }
++#endif
+ 
+ // opens UDP socket
+ static int mode_app(void)
+@@ -637,9 +713,12 @@ static int mode_app(void)
+     close(state->sockfd);
+     return -1;
+   }
++  // FreeBSD has no SO_BINDTODEVICE: the socket gets replies on each interface.
++#ifndef __FreeBSD__
+   xstrncpy(ifr.ifr_name, state->iface, IFNAMSIZ);
+   ifr.ifr_name[IFNAMSIZ -1] = '\0';
+   setsockopt(state->sockfd, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr));
++#endif
+ 
+   memset(&addr, 0, sizeof(addr));
+   addr.sin_family = AF_INET;
+@@ -656,16 +735,13 @@ static int mode_app(void)
+   return 0;
+ }
+ 
+-static int read_raw(void)
++// Check an IP packet and copy its DHCP message to state->pdhcp.
++static int check_raw(void *buf, int bytes)
+ {
+   dhcp_raw_t packet;
+-  int bytes = 0;
+ 
+   memset(&packet, 0, sizeof(packet));
+-  if ((bytes = read(state->sockfd, &packet, sizeof(packet))) < 0) {
+-    dbg("\tPacket read error, ignoring\n");
+-    return bytes;
+-  }
++  memcpy(&packet, buf, bytes = minof(bytes, sizeof(packet)));
+   if (bytes < (int) (sizeof(packet.iph) + sizeof(packet.udph))) {
+     dbg("\tPacket is too short, ignoring\n");
+     return -2;
+@@ -708,6 +784,38 @@ static int read_raw(void)
+   return bytes - sizeof(packet.iph) - sizeof(packet.udph);
+ }
+ 
++static int read_raw(void)
++{
++  int bytes;
++#ifdef __FreeBSD__
++  struct bpf_hdr *bh;
++  char *p;
++  int len;
++#endif
++
++  if ((bytes = read(state->sockfd, toybuf, sizeof(toybuf))) < 0) {
++    dbg("\tPacket read error, ignoring\n");
++    return bytes;
++  }
++#ifdef __FreeBSD__
++  // One read of bpf(4) gives each frame that it has. Use the first DHCP
++  // reply to this client and drop the rest, as a full socket buffer would.
++  for (p = toybuf; p < toybuf+bytes; p += BPF_WORDALIGN(bh->bh_hdrlen+len)) {
++    int n;
++
++    bh = (void *)p;
++    if ((len = bh->bh_caplen) < ETHER_HDR_LEN) continue;
++    n = check_raw(p+bh->bh_hdrlen+ETHER_HDR_LEN, len-ETHER_HDR_LEN);
++    if (n >= 0 && state->pdhcp.op == DHCP_REPLY && state->pdhcp.xid == xid
++        && !memcmp(state->pdhcp.chaddr, state->macaddr, 6)) return n;
++  }
++
++  return -2;
++#else
++  return check_raw(toybuf, bytes);
++#endif
++}
++
+ static int read_app(void)
+ {
+   int ret;
+@@ -727,7 +835,12 @@ static int read_app(void)
+ // Sends data through raw socket.
+ static int send_raw(void)
+ {
++#ifdef __FreeBSD__
++  struct ether_header eh;
++  struct iovec iov[2];
++#else
+   struct sockaddr_ll dest_sll;
++#endif
+   dhcp_raw_t packet;
+   unsigned padding;
+   int fd, result = -1;
+@@ -735,6 +848,12 @@ static int send_raw(void)
+   memset(&packet, 0, sizeof(dhcp_raw_t));
+   memcpy(&packet.dhcp, &state->pdhcp, sizeof(dhcp_msg_t));
+ 
++#ifdef __FreeBSD__
++  if ((fd = open_bpf()) < 0) {
++    dbg("SEND RAW: bpf failed\n");
++    return result;
++  }
++#else
+   if ((fd = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IP))) < 0) {
+     dbg("SEND RAW: socket failed\n");
+     return result;
+@@ -751,6 +870,7 @@ static int send_raw(void)
+     close(fd);
+     return result;
+   }
++#endif
+   padding = 308 - 1 - dhcp_opt_size(state->pdhcp.options);
+   packet.iph.protocol = IPPROTO_UDP;
+   packet.iph.saddr = INADDR_ANY;
+@@ -766,8 +886,19 @@ static int send_raw(void)
+   packet.iph.ttl = IPDEFTTL;
+   packet.iph.check = dhcp_checksum(&packet.iph, sizeof(packet.iph));
+ 
++#ifdef __FreeBSD__
++  // The kernel puts the address of the interface in the frame as its source.
++  memcpy(eh.ether_dhost, bmacaddr, 6);
++  eh.ether_type = htons(ETHERTYPE_IP);
++  iov[0].iov_base = &eh;
++  iov[0].iov_len = sizeof(eh);
++  iov[1].iov_base = &packet;
++  iov[1].iov_len = sizeof(dhcp_raw_t) - padding;
++  result = writev(fd, iov, 2);
++#else
+   result = sendto(fd, &packet, sizeof(dhcp_raw_t) - padding, 0,
+       (struct sockaddr *) &dest_sll, sizeof(dest_sll));
++#endif
+ 
+   close(fd);
+   if (result < 0) dbg("SEND RAW: PACKET send error\n");
+-- 
+2.50.1 (Apple Git-155)
+

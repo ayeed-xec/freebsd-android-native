@@ -36,7 +36,6 @@
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
 ifaddrs.getifaddrs_interfaces  abi:sys-class-net  Test compares the link entries with the symbolic links of /sys/class/net, and asysfs(4) has no /sys/class/net (register row 73).
-stdio.popen_socketpair_shutdown  tier0:toybox  Test runs uniq -c, a toybox program, which tier 0 does not build (plan M6). FreeBSD's uniq gives a count of 4 columns, not 7.
 stdio_ext.__fbufsize  abi:proc-blksize  stdio sizes the buffer from st_blksize; aprocfs gives 4096 for /proc/version, and Linux procfs gives 1024 (register row 74).
 sys_xattr.flistattr  flistxattr  extattr_list_fd(2) lists one name space in one call and in another format, so flistxattr() gives ENOTSUP (no one-call form).
 sys_xattr.flistattr_invalid_fd  flistxattr  flistxattr() gives ENOTSUP before any call, so a bad descriptor does not give EBADF.

@@ -27,11 +27,15 @@
 # jail.conf(5) for the bionic_unit_tests ctest entry; tests.cmake fills in
 # the paths.  The root is the Android root.  The runtime and i18n APEXes
 # and /system come read-only from this build, tzdata from the host, and
-# /bin is a symbolic link to /system/bin, as on Android.  The build tree
-# appears at its own path, so DT_RUNPATH and BIN_DIR are the same as outside
-# the jail.
-# The exec tests run echo, printenv and sh from BIN_DIR, which has copies
-# of the FreeBSD programs, so /lib and /libexec are there read-only too.
+# /bin is a symbolic link to /system/bin, as on Android.  Of the build tree
+# only jail/ appears, read-only and at its own path: propd, svcstart and
+# the programs that run-in-jail.sh starts.  The test suites are copied to
+# /data/local/tmp, as "adb push" does.  No FreeBSD program is in the jail:
+# toybox and sh are in /system/bin.
+#
+# As on a device, dmesg reads the kernel message buffer and a program can
+# lock its memory, within RLIMIT_MEMLOCK: allow.read_msgbuf and
+# allow.mlock.
 #
 # devfs cannot hold a directory that a program makes, so /dev/__properties__
 # and /dev/socket are devfs symbolic links into a tmpfs at /mnt/dev.  The
@@ -63,13 +67,15 @@ bionic_tests {
 	host.hostname = "localhost";
 	vnet;
 	persist;
+	allow.mlock;
+	allow.read_msgbuf;
 	exec.created = "ifconfig -j bionic_tests lo0 name lo";
 	exec.created += "ifconfig -j bionic_tests lo inet 127.0.0.1/8 up";
 	exec.created += "sysctl -j bionic_tests net.inet6.ip6.v6only=0";
 	exec.prepare = "mkdir -p $path/apex/com.android.i18n \
 	    $path/apex/com.android.runtime $path/apex/com.android.tzdata \
-	    $path/system $path/dev $path/lib $path/libexec $path/mnt/dev \
-	    $path/proc $path/sys $path/tmp $path@GEN@";
+	    $path/system $path/dev $path/mnt/dev \
+	    $path/proc $path/sys $path/tmp $path@JAIL_BIN@";
 	# An older root has an empty directory here, which -F replaces.
 	exec.prepare += "ln -sFh /system/bin $path/bin";
 	exec.prepare += "ln -sFh /system/etc $path/etc";
@@ -84,9 +90,7 @@ bionic_tests {
 	mount += "/apex/com.android.tzdata $path/apex/com.android.tzdata \
 	    nullfs ro 0 0";
 	mount += "@GEN@/android-root/system $path/system nullfs ro 0 0";
-	mount += "/lib $path/lib nullfs ro 0 0";
-	mount += "/libexec $path/libexec nullfs ro 0 0";
-	mount += "@GEN@ $path@GEN@ nullfs rw 0 0";
+	mount += "@JAIL_BIN@ $path@JAIL_BIN@ nullfs ro 0 0";
 	mount += "tmpfs $path/tmp tmpfs rw,mode=1777 0 0";
 	mount += "tmpfs $path/mnt/dev tmpfs \
 	    rw,mode=0755,uid=0,gid=0,size=1m 0 0";
@@ -114,8 +118,8 @@ bionic_tests {
 	    $path/dev/event-log-tags";
 	exec.prestart += "devfs -m $path/dev rule apply path event-log-tags \
 	    unhide";
-	exec.start = "@GEN@/propd @GEN@/property_contexts";
-	exec.start += "@GEN@/svcstart -s logd:stream:0666:1036:1036 \
+	exec.start = "@JAIL_BIN@/propd @JAIL_BIN@/property_contexts";
+	exec.start += "@JAIL_BIN@/svcstart -s logd:stream:0666:1036:1036 \
 	    -s logdr:seqpacket:0666:1036:1036 \
 	    -s logdw:dgram+passcred:0222:1036:1036 -g 1036,1000,1032,3009 \
 	    -p 10 -u 1036 /system/bin/logd";

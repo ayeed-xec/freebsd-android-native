@@ -1,0 +1,155 @@
+From 7573b2c116bd8d619c6b523e743f382c03852299 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:15:53 +0530
+Subject: [PATCH] toybox: Use the FreeBSD file flags in lsattr and chattr
+
+lsattr and chattr read and set the ext2 inode flags with the Linux
+ioctls FS_IOC_GETFLAGS and FS_IOC_SETFLAGS.  FreeBSD keeps the flags of
+a file in st_flags and sets them with fchflags(2).  It has three of the
+flags of the table: the system flags SF_IMMUTABLE and SF_APPEND are the
+immutable and append-only flags, which only root sets, as on Linux, and
+UF_NODUMP is no-dump.  The other FreeBSD flags stay as they are, and a
+Linux flag that FreeBSD does not have fails with EOPNOTSUPP.
+
+lsattr -v shows st_gen, the generation number of the inode, which
+FS_IOC_GETVERSION gives on Linux.  FreeBSD sets no generation number and
+has no project id, so chattr -v and -p and lsattr -p fail with
+EOPNOTSUPP.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/lsattr.c | 68 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/toys/other/lsattr.c b/toys/other/lsattr.c
+index 93af8cd..784a66e 100644
+--- a/toys/other/lsattr.c
++++ b/toys/other/lsattr.c
+@@ -107,6 +107,30 @@ static struct ext2_attr {
+   {NULL,                            0,                  0},
+ };
+ 
++#ifdef __FreeBSD__
++// FreeBSD keeps the flags of a file in st_flags and sets them with
++// fchflags(2). Its system flags SF_IMMUTABLE and SF_APPEND are the immutable
++// and append-only flags, which only root sets as on Linux, and UF_NODUMP is
++// no-dump. FreeBSD has no other flag of this table.
++static unsigned bsd_flags[][2] = {{FS_IMMUTABLE_FL, SF_IMMUTABLE},
++  {FS_APPEND_FL, SF_APPEND}, {FS_NODUMP_FL, UF_NODUMP}};
++
++static int ext2_getflag(int fd, struct stat *sb, unsigned *flag)
++{
++  struct stat st;
++  int i;
++
++  if (!S_ISREG(sb->st_mode) && !S_ISDIR(sb->st_mode)) {
++    errno = EOPNOTSUPP;
++    return -1;
++  }
++  if (fstat(fd, &st)) return -1;
++  for (*flag = i = 0; i<ARRAY_LEN(bsd_flags); i++)
++    if (st.st_flags & bsd_flags[i][1]) *flag |= bsd_flags[i][0];
++
++  return 0;
++}
++#else
+ // Get file flags on a Linux second extended file system.
+ static int ext2_getflag(int fd, struct stat *sb, unsigned *flag)
+ {
+@@ -116,6 +140,7 @@ static int ext2_getflag(int fd, struct stat *sb, unsigned *flag)
+   }
+   return ioctl(fd, FS_IOC_GETFLAGS, flag);
+ }
++#endif
+ 
+ static char *attrstr(unsigned attrs, int full)
+ {
+@@ -142,6 +167,14 @@ static void print_file_attr(char *path)
+   }
+   if (-1 == (fd=open(path, O_RDONLY | O_NONBLOCK))) goto error;
+ 
++#ifdef __FreeBSD__
++  // FreeBSD has no project id. st_gen is the generation of the inode.
++  if (FLAG(p)) {
++    errno = EOPNOTSUPP;
++    goto error;
++  }
++  if (FLAG(v)) xprintf("%-10u ", (unsigned)sb.st_gen);
++#else
+   if (FLAG(p)) {
+     struct fsxattr fsx;
+ 
+@@ -152,6 +185,7 @@ static void print_file_attr(char *path)
+     if (ioctl(fd, FS_IOC_GETVERSION, (void*)&version) < 0) goto error;
+     xprintf("%-10u ", version);
+   }
++#endif
+ 
+   if (ext2_getflag(fd, &sb, &flag) < 0) perror_msg("reading flags '%s'", path);
+   else {
+@@ -221,6 +255,31 @@ void lsattr_main(void)
+ #define FOR_chattr
+ #include "generated/flags.h"
+ 
++#ifdef __FreeBSD__
++static int ext2_setflag(int fd, struct stat *sb, unsigned flag)
++{
++  struct stat st;
++  unsigned long bsd;
++  int i;
++
++  if (!S_ISREG(sb->st_mode) && !S_ISDIR(sb->st_mode)) {
++    errno = EOPNOTSUPP;
++    return -1;
++  }
++  if (fstat(fd, &st)) return -1;
++  for (bsd = st.st_flags, i = 0; i<ARRAY_LEN(bsd_flags); i++) {
++    if (flag & bsd_flags[i][0]) bsd |= bsd_flags[i][1];
++    else bsd &= ~bsd_flags[i][1];
++    flag &= ~bsd_flags[i][0];
++  }
++  if (flag) {
++    errno = EOPNOTSUPP;
++    return -1;
++  }
++
++  return fchflags(fd, bsd);
++}
++#else
+ // Set file flags on a Linux second extended file system.
+ static inline int ext2_setflag(int fd, struct stat *sb, unsigned flag)
+ {
+@@ -230,6 +289,7 @@ static inline int ext2_setflag(int fd, struct stat *sb, unsigned flag)
+   }
+   return ioctl(fd, FS_IOC_SETFLAGS, &flag);
+ }
++#endif
+ 
+ static unsigned get_flag_val(char ch)
+ {
+@@ -301,6 +361,13 @@ static int update_attr(struct dirtree *root)
+       perror_msg("%s: setting flags to =%s failed", fpath, attrstr(new, 0));
+   }
+ 
++#ifdef __FreeBSD__
++  // FreeBSD sets no generation and has no project id.
++  errno = EOPNOTSUPP;
++  if (FLAG(v)) perror_msg("%s: setting version to %d failed", fpath, vv);
++  if (FLAG(p))
++    perror_msg("%s: setting projid to %u failed", fpath, (unsigned)TT.p);
++#else
+   // (FS_IOC_SETVERSION works all the way back to 2.6, but FS_IOC_FSSETXATTR
+   // isn't available until 4.5.)
+   if (FLAG(v) && (ioctl(fd, FS_IOC_SETVERSION, &vv)<0))
+@@ -314,6 +381,7 @@ static int update_attr(struct dirtree *root)
+     if (fail || ioctl(fd, FS_IOC_FSSETXATTR, &fsx))
+       perror_msg("%s: setting projid to %u failed", fpath, fsx.fsx_projid);
+   }
++#endif
+ 
+   free(fpath);
+   xclose(fd);
+-- 
+2.50.1 (Apple Git-155)
+

@@ -282,7 +282,7 @@ target_link_options(svcstart PRIVATE -static -nostdlib -fuse-ld=lld
     -Wl,--gc-sections "${GEN}/crtbegin_static.o")
 target_link_libraries(svcstart PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
-set_target_properties(svcstart PROPERTIES
+set_target_properties(svcstart PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}"
     LINK_DEPENDS "${GEN}/crtbegin_static.o")
 if(BUILTINS_LIB)
 	target_link_libraries(svcstart PRIVATE "${BUILTINS_LIB}")

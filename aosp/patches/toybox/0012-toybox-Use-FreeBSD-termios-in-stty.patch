@@ -1,0 +1,192 @@
+From e63dd3d0a817bcb6312a97023fcf21c3e0268fdc Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:34:03 +0530
+Subject: [PATCH] toybox: Use FreeBSD termios in stty
+
+stty uses the Linux form of termios: the speed as an index with
+CBAUDEX, the c_line field, and flags that FreeBSD does not have.
+
+A FreeBSD speed_t is the rate itself, so baud() and speed() give it as
+it is; speed() still accepts only the rates of its table.  FreeBSD
+keeps the line discipline apart from termios: line uses TIOCSETD, and
+the display uses TIOCGETD.  The tables and the "sane" settings leave
+out what FreeBSD's termios does not have: swtch, cmspar, iuclc, olcuc,
+ofill, ofdel, xcase, and the output delays other than tab0 and tab3.
+These names are then unknown, as other unknown names are.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/stty.c | 84 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/toys/pending/stty.c b/toys/pending/stty.c
+index 25d2d9b..7a654f5 100644
+--- a/toys/pending/stty.c
++++ b/toys/pending/stty.c
+@@ -38,7 +38,9 @@ config STTY
+ #define FOR_stty
+ #include "toys.h"
+ 
++#ifndef __FreeBSD__
+ #include <linux/tty.h>
++#endif
+ 
+ GLOBALS(
+   char *F;
+@@ -53,11 +55,19 @@ static const int bauds[] = {
+   1000000, 1152000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000
+ };
+ 
++#ifdef __FreeBSD__
++// A FreeBSD speed_t is the rate itself.
++static int baud(speed_t speed)
++{
++  return speed;
++}
++#else
+ static int baud(speed_t speed)
+ {
+   if (speed&CBAUDEX) speed=(speed&~CBAUDEX)+15;
+   return bauds[speed];
+ }
++#endif
+ 
+ static speed_t speed(int baud)
+ {
+@@ -65,7 +75,11 @@ static speed_t speed(int baud)
+ 
+   for (i=0;i<ARRAY_LEN(bauds);i++) if (bauds[i] == baud) break;
+   if (i == ARRAY_LEN(bauds)) error_exit("unknown speed: %d", baud);
++#ifdef __FreeBSD__
++  return baud;
++#else
+   return i+4081*(i>=16);
++#endif
+ }
+ 
+ struct flag {
+@@ -74,6 +88,46 @@ struct flag {
+   int mask;
+ };
+ 
++#ifdef __FreeBSD__
++// FreeBSD's termios has no swtch, cmspar, iuclc, olcuc, ofill, ofdel or
++// xcase, and of the output delays only tab0 and tab3.
++static const struct flag chars[] = {
++  { "intr", VINTR }, { "quit", VQUIT }, { "erase", VERASE }, { "kill", VKILL },
++  { "eof", VEOF }, { "eol", VEOL }, { "eol2", VEOL2 },
++  { "start", VSTART }, { "stop", VSTOP }, { "susp", VSUSP },
++  { "rprnt", VREPRINT }, { "werase", VWERASE }, { "lnext", VLNEXT },
++  { "discard", VDISCARD }, { "min", VMIN }, { "time", VTIME },
++};
++
++static const struct flag cflags[] = {
++  { "parenb", PARENB }, { "parodd", PARODD },
++  { "cs5", CS5, CSIZE }, { "cs6", CS6, CSIZE }, { "cs7", CS7, CSIZE },
++  { "cs8", CS8, CSIZE }, { "hupcl", HUPCL }, { "cstopb", CSTOPB },
++  { "cread", CREAD }, { "clocal", CLOCAL }, { "crtscts", CRTSCTS },
++};
++
++static const struct flag iflags[] = {
++  { "ignbrk", IGNBRK }, { "brkint", BRKINT }, { "ignpar", IGNPAR },
++  { "parmrk", PARMRK }, { "inpck", INPCK }, { "istrip", ISTRIP },
++  { "inlcr", INLCR }, { "igncr", IGNCR }, { "icrnl", ICRNL }, { "ixon", IXON },
++  { "ixoff", IXOFF }, { "ixany", IXANY },
++  { "imaxbel", IMAXBEL }, { "iutf8", IUTF8 },
++};
++
++static const struct flag oflags[] = {
++  { "opost", OPOST }, { "ocrnl", OCRNL },
++  { "onlcr", ONLCR }, { "onocr", ONOCR }, { "onlret", ONLRET },
++  { "tab0", TAB0, TABDLY }, { "tab3", TAB3, TABDLY },
++};
++
++static const struct flag lflags[] = {
++  { "isig", ISIG }, { "icanon", ICANON }, { "iexten", IEXTEN },
++  { "echo", ECHO }, { "echoe", ECHOE }, { "echok", ECHOK },
++  { "echonl", ECHONL }, { "noflsh", NOFLSH },
++  { "tostop", TOSTOP }, { "echoprt", ECHOPRT }, { "echoctl", ECHOCTL },
++  { "echoke", ECHOKE }, { "flusho", FLUSHO }, { "extproc", EXTPROC },
++};
++#else
+ static const struct flag chars[] = {
+   { "intr", VINTR }, { "quit", VQUIT }, { "erase", VERASE }, { "kill", VKILL },
+   { "eof", VEOF }, { "eol", VEOL }, { "eol2", VEOL2 }, { "swtch", VSWTC },
+@@ -115,6 +169,7 @@ static const struct flag lflags[] = {
+   { "tostop", TOSTOP }, { "echoprt", ECHOPRT }, { "echoctl", ECHOCTL },
+   { "echoke", ECHOKE }, { "flusho", FLUSHO }, { "extproc", EXTPROC },
+ };
++#endif
+ 
+ static const struct synonym {
+   char *from;
+@@ -285,12 +340,21 @@ static void make_sane(struct termios *t)
+ {
+   // POSIX has no opinion about what "sane" means. From "man stty".
+   // "cs8" is missing from the man page, but needed to get identical results.
++#ifdef __FreeBSD__
++  set_options(t, "cread", "-ignbrk", "brkint", "-inlcr", "-igncr", "icrnl",
++    "icanon", "iexten", "echo", "echoe", "echok", "-echonl", "-noflsh",
++    "-ixoff", "-iutf8", "-ixany", "imaxbel",
++    "-ocrnl", "opost", "onlcr", "-onocr", "-onlret",
++    "tab0", "isig", "-tostop", "-echoprt",
++    "echoctl", "echoke", "-extproc", "-flusho", "cs8", NULL);
++#else
+   set_options(t, "cread", "-ignbrk", "brkint", "-inlcr", "-igncr", "icrnl",
+     "icanon", "iexten", "echo", "echoe", "echok", "-echonl", "-noflsh",
+     "-ixoff", "-iutf8", "-iuclc", "-ixany", "imaxbel", "-xcase", "-olcuc",
+     "-ocrnl", "opost", "-ofill", "onlcr", "-onocr", "-onlret", "nl0", "cr0",
+     "tab0", "bs0", "vt0", "ff0", "isig", "-tostop", "-ofdel", "-echoprt",
+     "echoctl", "echoke", "-extproc", "-flusho", "cs8", NULL);
++#endif
+   memset(t->c_cc, 0, NCCS);
+   t->c_cc[VINTR] = 0x3;
+   t->c_cc[VQUIT] = 0x1c;
+@@ -299,7 +363,9 @@ static void make_sane(struct termios *t)
+   t->c_cc[VEOF] = 0x4;
+   t->c_cc[VTIME] = 0;
+   t->c_cc[VMIN] = 1;
++#ifndef __FreeBSD__
+   t->c_cc[VSWTC] = 0;
++#endif
+   t->c_cc[VSTART] = 0x11;
+   t->c_cc[VSTOP] = 0x13;
+   t->c_cc[VSUSP] = 0x1a;
+@@ -337,7 +403,16 @@ void stty_main(void)
+ 
+       if (!strcmp(arg, "size")) show_size(0);
+       else if (!strcmp(arg, "speed")) show_speed(&old, 0);
++#ifdef __FreeBSD__
++      // FreeBSD keeps the line discipline apart from termios.
++      else if (!strcmp(arg, "line")) {
++        int ld = get_arg(&i, 255);
++
++        xioctl(TT.fd, TIOCSETD, &ld);
++      }
++#else
+       else if (!strcmp(arg, "line")) new.c_line = get_arg(&i, NR_LDISCS);
++#endif
+       else if (!strcmp(arg, "min")) new.c_cc[VMIN] = get_arg(&i, 255);
+       else if (!strcmp(arg, "time")) new.c_cc[VTIME] = get_arg(&i, 255);
+       else if (sscanf(arg, "%x:%x:%x:%x:%n", &tmp.c_iflag, &tmp.c_oflag,
+@@ -425,7 +500,16 @@ void stty_main(void)
+   make_sane(&sane);
+   show_speed(&old, 1);
+   if (FLAG(a)) show_size(1);
++#ifdef __FreeBSD__
++  {
++    int ld = 0;
++
++    ioctl(TT.fd, TIOCGETD, &ld);
++    out("line = %d;\n", ld);
++  }
++#else
+   out("line = %d;\n", old.c_line);
++#endif
+ 
+   for (i=j=0; i<ARRAY_LEN(chars); i++) {
+     char vis[16] = {};
+-- 
+2.50.1 (Apple Git-155)
+

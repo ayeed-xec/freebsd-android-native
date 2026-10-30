@@ -1,0 +1,47 @@
+From e65d725629293284d9aa5f17dc2f498efcf70295 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:42:58 +0530
+Subject: [PATCH] toybox: Show a mask that the FreeBSD kernel made in ifconfig
+
+When an address gets no mask, the FreeBSD kernel makes one, and that
+mask has no family.  ifconfig took a part with no family as not set
+and showed "Mask:[NOT SET]".  On FreeBSD only a failed ioctl means
+that a part is not set.
+
+A lagg(4) device is IFT_ETHER itself; its ports have the type
+IFT_IEEE8023ADLAG.  Say so in the comment of the link types.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ifconfig.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/toys/net/ifconfig.c b/toys/net/ifconfig.c
+index b46737f..9fbc199 100644
+--- a/toys/net/ifconfig.c
++++ b/toys/net/ifconfig.c
+@@ -160,7 +160,8 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+ 
+         if (sdl && sdl->sdl_family == AF_LINK && !strcmp(ifa->ifa_name, name)) {
+           hwtype = sdl->sdl_type;
+-          // Linux calls vlan, bridge and lagg devices Ethernet too.
++          // Linux calls vlan and bridge devices, and the ports of a lagg,
++          // Ethernet too.
+           if (hwtype == IFT_L2VLAN || hwtype == IFT_BRIDGE ||
+               hwtype == IFT_IEEE8023ADLAG) hwtype = IFT_ETHER;
+           if (sdl->sdl_alen == 6) memcpy(hw, LLADDR(sdl), 6);
+@@ -223,7 +224,9 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+         if (addr[i].ioctl && ioctl(TT.sockfd, addr[i].ioctl, &ifre))
+           si->sin_family = 0;
+ #ifdef __FreeBSD__
+-        // sa_family_t is one byte on FreeBSD.
++        // A mask that the kernel made has no family, so only the ioctl
++        // tells if a part is set. sa_family_t is one byte on FreeBSD.
++        else si->sin_family = AF_INET;
+         xprintf(" %s:%s ", addr[i].name,
+           !si->sin_family ? "[NOT SET]" : inet_ntoa(si->sin_addr));
+ #else
+-- 
+2.50.1 (Apple Git-155)
+

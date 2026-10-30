@@ -1,0 +1,118 @@
+From b8285848e37975b2cf1678320f7f9c9e6694bd37 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:18:42 +0530
+Subject: [PATCH] toybox: Read the FreeBSD kernel message buffer in dmesg
+
+dmesg reads /dev/kmsg or calls klogctl().  FreeBSD has neither: its
+kernel message buffer is the kern.msgbuf sysctl, and the sysctl
+kern.msgbuf_clear clears it.  dmesg reads the buffer there and clears
+it for -c and -C.
+
+A line of FreeBSD's buffer has a priority, but a time only with
+kern.msgbuf_show_timestamp, and a line of the kernel console has no
+priority.  dmesg shows such a line without a time, as kernel
+information.
+
+FreeBSD has no console log level and no way to follow the buffer, so
+-n fails, and -w and -W read the buffer once.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/lsb/dmesg.c | 42 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/toys/lsb/dmesg.c b/toys/lsb/dmesg.c
+index 29539af..d82f12d 100644
+--- a/toys/lsb/dmesg.c
++++ b/toys/lsb/dmesg.c
+@@ -32,6 +32,9 @@ config DMESG
+ #define FOR_dmesg
+ #include "toys.h"
+ #include <sys/klog.h>
++#ifdef __FreeBSD__
++#include <sys/sysctl.h>
++#endif
+ 
+ GLOBALS(
+   long n, s;
+@@ -48,7 +51,7 @@ static void color(int c)
+ static void format_message(char *msg, int new)
+ {
+   unsigned long long time_s, time_us;
+-  int facpri, subsystem, pos, ii, jj, in, out;
++  int facpri, subsystem, pos, ii, jj, in, out, notime = 0;
+   char *p, *text;
+ 
+   // The new /dev/kmsg and the old syslog(2) formats differ slightly.
+@@ -59,7 +62,19 @@ static void format_message(char *msg, int new)
+     time_s = time_us/1000000;
+     time_us %= 1000000;
+   } else if (sscanf(msg, "<%u>[%llu.%llu] %n",
+-                    &facpri, &time_s, &time_us, &pos) != 3) return;
++                    &facpri, &time_s, &time_us, &pos) != 3) {
++#ifdef __FreeBSD__
++    // FreeBSD's lines have a time only with kern.msgbuf_show_timestamp, and
++    // the kernel's console lines have no priority.
++    notime = 1;
++    if (sscanf(msg, "<%u>%n", &facpri, &pos) != 1) {
++      facpri = LOG_KERN|LOG_INFO;
++      pos = 0;
++    }
++#else
++    return;
++#endif
++  }
+ 
+   // Drop extras after end of message text.
+   if ((p = strchr(text = msg+pos, '\n'))) *p = 0;
+@@ -81,7 +96,7 @@ static void format_message(char *msg, int new)
+   }
+ 
+   // Format the time.
+-  if (!FLAG(t)) {
++  if (!FLAG(t) && !notime) {
+     color(32);
+     if (FLAG(T)) {
+       time_t t = TT.tea+time_s;
+@@ -161,10 +176,22 @@ void dmesg_main(void)
+     int size;
+ 
+ klogctl_mode:
++#ifdef __FreeBSD__
++    // FreeBSD's kernel message buffer is the kern.msgbuf sysctl.
++    {
++      size_t len = 0;
++
++      if (sysctlbyname("kern.msgbuf", 0, &len, 0, 0)) perror_exit("msgbuf");
++      data = from = xmalloc(len+1);
++      if (sysctlbyname("kern.msgbuf", data, &len, 0, 0)) perror_exit("msgbuf");
++      data[size = len] = 0;
++    }
++#else
+     // Figure out how much data we need, and fetch it.
+     if (!(size = TT.s)) size = xklogctl(10, 0, 0);
+     data = from = xmalloc(size+1);
+     data[size = xklogctl(3+FLAG(c), data, size)] = 0;
++#endif
+ 
+     // Send each line to format_message.
+     to = data + size;
+@@ -183,5 +210,14 @@ no_output:
+   if (FLAG(n)) xklogctl(8, 0, TT.n);
+ 
+   // Clear the buffer?
++#ifdef __FreeBSD__
++  if (FLAG(C)||FLAG(c)) {
++    int one = 1;
++
++    if (sysctlbyname("kern.msgbuf_clear", 0, 0, &one, sizeof(one)))
++      perror_exit("msgbuf_clear");
++  }
++#else
+   if (FLAG(C)||FLAG(c)) xklogctl(5, 0, 0);
++#endif
+ }
+-- 
+2.50.1 (Apple Git-155)
+

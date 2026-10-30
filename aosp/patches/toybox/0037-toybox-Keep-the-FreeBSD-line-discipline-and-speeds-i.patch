@@ -1,0 +1,67 @@
+From 98467b69d2ab0c3e8f9a23cc846e08b4ad0e2e6c Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:44:24 +0530
+Subject: [PATCH] toybox: Keep the FreeBSD line discipline and speeds in stty
+
+- FreeBSD has one line discipline, termios (0), and the kernel has no
+  handler for TIOCSETD, so stty line N always failed with ENOTTY.
+  Accept line 0 and refuse other values, as for a value out of range.
+- Linux keeps the speeds in c_cflag, so stty -g saves them.  FreeBSD
+  keeps them in c_ispeed and c_ospeed, which -g left out.  On FreeBSD
+  put the two speeds after the special characters, and read them back.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/stty.c | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/toys/pending/stty.c b/toys/pending/stty.c
+index 7fff7ac..3265aff 100644
+--- a/toys/pending/stty.c
++++ b/toys/pending/stty.c
+@@ -409,12 +409,8 @@ void stty_main(void)
+       if (!strcmp(arg, "size")) show_size(0);
+       else if (!strcmp(arg, "speed")) show_speed(&old, 0);
+ #ifdef __FreeBSD__
+-      // FreeBSD keeps the line discipline apart from termios.
+-      else if (!strcmp(arg, "line")) {
+-        int ld = get_arg(&i, 255);
+-
+-        xioctl(TT.fd, TIOCSETD, &ld);
+-      }
++      // FreeBSD has one line discipline, 0, and no TIOCSETD.
++      else if (!strcmp(arg, "line")) get_arg(&i, 0);
+ #else
+       else if (!strcmp(arg, "line")) new.c_line = get_arg(&i, NR_LDISCS);
+ #endif
+@@ -435,6 +431,13 @@ void stty_main(void)
+           new.c_cc[j] = value;
+           arg += n+1;
+         }
++#ifdef __FreeBSD__
++        // FreeBSD keeps the speeds apart from c_cflag, after the characters.
++        if (sscanf(arg-1, ":%x:%x", &tmp.c_ispeed, &tmp.c_ospeed) != 2)
++          error_exit("bad -g string");
++        new.c_ispeed = tmp.c_ispeed;
++        new.c_ospeed = tmp.c_ospeed;
++#endif
+       } else if (atoi(arg) > 0) {
+         int new_speed = speed(atolx_range(arg, 0, 4000000));
+ 
+@@ -503,7 +506,12 @@ void stty_main(void)
+ 
+   if (FLAG(g)) {
+     xprintf("%x:%x:%x:%x:", old.c_iflag, old.c_oflag, old.c_cflag, old.c_lflag);
++#ifdef __FreeBSD__
++    for (i=0;i<NCCS;i++) xprintf("%x:", old.c_cc[i]);
++    xprintf("%x:%x\n", old.c_ispeed, old.c_ospeed);
++#else
+     for (i=0;i<NCCS;i++) xprintf("%x%c", old.c_cc[i], i==NCCS-1?'\n':':');
++#endif
+     return;
+   }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

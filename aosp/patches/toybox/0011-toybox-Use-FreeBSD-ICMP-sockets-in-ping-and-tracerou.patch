@@ -1,0 +1,153 @@
+From 4f66baa35d5e5910df527d4b60ec6f02512538a0 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:32:12 +0530
+Subject: [PATCH] toybox: Use FreeBSD ICMP sockets in ping and traceroute
+
+FreeBSD has no ICMP datagram socket of the Linux kind, which lets a
+user ping without privilege.  ping uses a raw ICMP socket, as FreeBSD's
+own ping does: it needs root, and allow.raw_sockets in a jail.  A raw
+socket gets each ICMP packet, and IPv4 ones with the IP header, so ping
+takes the ttl from that header and keeps only its own echo replies.
+FreeBSD has no mark of the packets of a socket, so ping -m fails with
+EOPNOTSUPP.
+
+traceroute already uses raw sockets.  FreeBSD computes the checksum of
+an ICMPv6 socket itself and does not take IPV6_CHECKSUM there, and it
+gives the RFC 2292 option IPV6_2292PKTINFO only to the kernel, next to
+IPV6_RECVPKTINFO.  FreeBSD has no socket bound to an interface, so -i
+reports EOPNOTSUPP.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ping.c           | 36 ++++++++++++++++++++++++++++++++++++
+ toys/pending/traceroute.c | 12 ++++++++++++
+ 2 files changed, 48 insertions(+)
+
+diff --git a/toys/net/ping.c b/toys/net/ping.c
+index 3c00e0c..a25d0aa 100644
+--- a/toys/net/ping.c
++++ b/toys/net/ping.c
+@@ -45,6 +45,9 @@ config PING
+ 
+ #include <ifaddrs.h>
+ #include <netinet/ip_icmp.h>
++#ifdef __FreeBSD__
++#include <netinet/ip.h>
++#endif
+ 
+ GLOBALS(
+   char *I;
+@@ -167,12 +170,22 @@ void ping_main(void)
+     error_exit("no v%d addr for -I %s", 4+2*(family==AF_INET6), TT.I);
+   TT.sa = ai->ai_addr;
+ 
++#ifdef __FreeBSD__
++  // FreeBSD has no ICMP datagram socket. A raw socket needs root, and
++  // allow.raw_sockets in a jail.
++  sa->sa_family = ai->ai_family;
++  TT.sock = socket(ai->ai_family, SOCK_RAW,
++    len = (ai->ai_family == AF_INET) ? IPPROTO_ICMP : IPPROTO_ICMPV6);
++  if (TT.sock == -1) {
++    perror_msg("socket SOCK_RAW %x", len);
++#else
+   // Open DGRAM socket
+   sa->sa_family = ai->ai_family;
+   TT.sock = socket(ai->ai_family, SOCK_DGRAM,
+     len = (ai->ai_family == AF_INET) ? IPPROTO_ICMP : IPPROTO_ICMPV6);
+   if (TT.sock == -1) {
+     perror_msg("socket SOCK_DGRAM %x", len);
++#endif
+     if (errno == EACCES) {
+       fprintf(stderr, "Kernel bug workaround:\n"
+         "echo 0 99999999 | sudo tee /proc/sys/net/ipv4/ping_group_range\n");
+@@ -181,6 +194,14 @@ void ping_main(void)
+   }
+   if (TT.I) xbind(TT.sock, sa, sizeof(srcaddr));
+ 
++#ifdef __FreeBSD__
++  // The ttl is in the IP header of each reply. FreeBSD has no mark of the
++  // packets of a socket.
++  if (FLAG(m)) {
++    errno = EOPNOTSUPP;
++    perror_exit("-m");
++  }
++#else
+   len = 1;
+   xsetsockopt(TT.sock, SOL_IP, IP_RECVTTL, &len, sizeof(len));
+ 
+@@ -188,6 +209,7 @@ void ping_main(void)
+     len = TT.m;
+     xsetsockopt(TT.sock, SOL_SOCKET, SO_MARK, &len, sizeof(len));
+   }
++#endif
+ 
+   if (TT.t) {
+     len = TT.t;
+@@ -271,6 +293,20 @@ void ping_main(void)
+     if (waitms<0) waitms = 0;
+     if (!(len = xrecvmsgwait(TT.sock, &msg, 0, &srcaddr2, waitms)))
+       continue;
++#ifdef __FreeBSD__
++    // A raw socket gets each ICMP packet, IPv4 ones with the IP header: keep
++    // the echo replies of this ping.
++    if (ai->ai_family == AF_INET) {
++      struct ip *ip = (void *)toybuf;
++      int hl = ip->ip_hl<<2;
++
++      if (len < hl+sizeof(*ih)) continue;
++      ttl = ip->ip_ttl;
++      memmove(toybuf, toybuf+hl, len -= hl);
++    }
++    if (ih->type != ((ai->ai_family == AF_INET) ? 0 : 129)
++        || ih->un.echo.id != (unsigned short)getpid()) continue;
++#endif
+ 
+     TT.recv++;
+     TT.fugit += (pkttime = millitime()-*(unsigned *)(ih+1));
+diff --git a/toys/pending/traceroute.c b/toys/pending/traceroute.c
+index 6107ff3..6cc6a1c 100644
+--- a/toys/pending/traceroute.c
++++ b/toys/pending/traceroute.c
+@@ -170,11 +170,17 @@ static void set_flag_dr(int sock)
+ 
+ static void bind_to_interface(int sock)
+ {
++#ifdef __FreeBSD__
++  // FreeBSD has no socket bound to an interface.
++  errno = EOPNOTSUPP;
++  perror_msg("can't bind to interface %s", TT.iface);
++#else
+   struct ifreq ifr;
+ 
+   snprintf(ifr.ifr_name, IFNAMSIZ, "%s", TT.iface);
+   if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)))
+       perror_msg("can't bind to interface %s", TT.iface);
++#endif
+ }
+ 
+ static void resolve_addr(char *host, int family, int type, int proto, void *sock)
+@@ -513,14 +519,20 @@ void traceroute_main(void)
+ #ifdef IPV6_RECVPKTINFO
+     setsockopt(TT.recv_sock, SOL_IPV6, IPV6_RECVPKTINFO, &set,
+         sizeof(set));
++#ifdef IPV6_2292PKTINFO
+     setsockopt(TT.recv_sock, SOL_IPV6, IPV6_2292PKTINFO, &set,
+         sizeof(set));
++#endif
+ #else
+     setsockopt(TT.recv_sock, SOL_IPV6, IPV6_PKTINFO, &set, sizeof(set));
+ #endif
+ 
++#ifndef __FreeBSD__
++    // FreeBSD computes the checksum of each ICMPv6 socket itself and does not
++    // take IPV6_CHECKSUM there.
+     if (setsockopt(TT.recv_sock, SOL_RAW, IPV6_CHECKSUM, &two,
+           sizeof(two)) < 0)  perror_exit("setsockopt RAW_CHECKSUM");
++#endif
+   }
+ 
+   set_flag_dr(TT.recv_sock);
+-- 
+2.50.1 (Apple Git-155)
+

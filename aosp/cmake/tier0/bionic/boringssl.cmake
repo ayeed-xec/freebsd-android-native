@@ -119,6 +119,8 @@ add_library(crypto_static STATIC $<TARGET_OBJECTS:boringssl_crypto_static>)
 system_program(test_fips SRCS "${BORINGSSL}/src/util/fipstools/test_fips.cc"
     LIBS crypto_shared ${LIBCXX_STATIC})
 add_dependencies(test_fips crypto_hashed)
+set_target_properties(test_fips PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}")
 target_include_directories(test_fips SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
 target_include_directories(test_fips PRIVATE "${BORINGSSL}/src/include")
 target_compile_options(test_fips PRIVATE ${BORINGSSL_FLAGS} -DBORINGSSL_FIPS)

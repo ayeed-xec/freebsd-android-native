@@ -1,0 +1,54 @@
+From b7fc8d40814a81c31d8f050a50e0a93909ba40db Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:43:32 +0530
+Subject: [PATCH] toybox: Show the priority of a FreeBSD bridge in brctl show
+
+FreeBSD fills in the bridge id of BRDGPARAM only while the spanning tree
+runs.  Without it brctl show gave the priority 0000, where Linux shows
+the priority of the bridge, 8000 by default.  Take the priority from
+ifbop_priority of the same reply, as the MAC address comes from the
+AF_LINK entry.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/brctl.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/toys/pending/brctl.c b/toys/pending/brctl.c
+index 5956215..de88f7f 100644
+--- a/toys/pending/brctl.c
++++ b/toys/pending/brctl.c
+@@ -88,6 +88,7 @@ void br_show(char **argv)
+   struct ifbropreq op;
+   struct ifbreq *ports;
+   unsigned long long mac;
++  unsigned pri;
+   int i, n, stp;
+ 
+   if (getifaddrs(&ifs)) perror_exit("getifaddrs");
+@@ -101,13 +102,16 @@ void br_show(char **argv)
+     n = get_ports(ifa->ifa_name, &ports);
+     for (i = stp = 0; i < n; i++) stp |= ports[i].ifbr_ifsflags & IFBIF_STP;
+ 
+-    // The bridge id is the priority and then a MAC address. FreeBSD puts the
+-    // MAC address in it only while STP runs; else show the bridge's own.
+-    if (!(mac = op.ifbop_bridgeid & 0xffffffffffffULL))
++    // The bridge id is the priority and then a MAC address. FreeBSD fills it
++    // in only while STP runs; else show the bridge's priority and address.
++    pri = op.ifbop_bridgeid>>48;
++    if (!(mac = op.ifbop_bridgeid & 0xffffffffffffULL)) {
++      pri = op.ifbop_priority;
+       for (i = 0; i < sdl->sdl_alen; i++)
+         mac = mac<<8 | ((unsigned char *)LLADDR(sdl))[i];
+-    printf("%s\t\t%.4x.%.12llx\t%s\t\t", ifa->ifa_name,
+-      (unsigned)(op.ifbop_bridgeid>>48), mac, stp ? "yes" : "no");
++    }
++    printf("%s\t\t%.4x.%.12llx\t%s\t\t", ifa->ifa_name, pri, mac,
++      stp ? "yes" : "no");
+     for (i = 0; i < n; i++)
+       printf("%s%s", i ? "\n\t\t\t\t\t\t\t" : "", ports[i].ifbr_ifsname);
+     xputc('\n');
+-- 
+2.50.1 (Apple Git-155)
+

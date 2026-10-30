@@ -145,6 +145,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/accept.cpp"
         "${LIBC}/bionic/access.cpp"
         "${LIBC}/bionic/android_set_abort_message.cpp"
+        "${LIBC}/bionic/arpa_inet.cpp"
         "${LIBC}/bionic/assert.cpp"
         "${LIBC}/bionic/atexit.cpp"
         "${LIBC}/bionic/bionic_allocator.cpp"
@@ -188,6 +189,7 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/gettid.cpp"
         "${LIBC}/bionic/heap_tagging.cpp"
         "${LIBC}/bionic/heap_zero_init.cpp"
+        "${LIBC}/bionic/iconv.cpp"
         "${LIBC}/bionic/ifaddrs.cpp"
         "${LIBC}/bionic/inotify_init.cpp"
         "${LIBC}/bionic/ioctl.cpp"
@@ -197,12 +199,14 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/langinfo.cpp"
         "${LIBC}/bionic/libc_init_common.cpp"
         "${LIBC}/bionic/libgen.cpp"
+        "${LIBC}/bionic/link.cpp"
         "${LIBC}/bionic/locale.cpp"
         "${LIBC}/bionic/lockf.cpp"
         "${LIBC}/bionic/lstat.cpp"
         "${LIBC}/bionic/mbrtoc32.cpp"
         "${LIBC}/bionic/memset_explicit.cpp"
         "${LIBC}/bionic/mkdir.cpp"
+        "${LIBC}/bionic/mknod.cpp"
         "${LIBC}/bionic/mntent.cpp"
         "${LIBC}/bionic/new.cpp"
         "${LIBC}/bionic/NetdClientDispatch.cpp"
@@ -278,11 +282,13 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/tmpfile.cpp"
         "${LIBC}/bionic/unlink.cpp"
         "${LIBC}/bionic/usleep.cpp"
+        "${LIBC}/bionic/utmp.cpp"
         "${LIBC}/bionic/vdso.cpp"
         "${LIBC}/bionic/wait.cpp"
         "${LIBC}/bionic/wchar.cpp"
         "${LIBC}/bionic/wctype.cpp"
         "${LIBC}/bionic/wcstod.cpp"
+        "${LIBC}/bionic/wcwidth.cpp"
         "${LIBC}/stdio/fmemopen.cpp"
         "${LIBC}/stdio/stdio.cpp"
         "${LIBC}/stdio/stdio_ext.cpp"
@@ -339,12 +345,15 @@ libc_objects(libc_freebsd_port
         "${LIBC}/bionic/freebsd/madvise.c"
         "${LIBC}/bionic/freebsd/memfd_create.c"
         "${LIBC}/bionic/freebsd/mlock2.c"
+        "${LIBC}/bionic/freebsd/mount.c"
         "${LIBC}/bionic/freebsd/mmap.c"
         "${LIBC}/bionic/freebsd/mremap.c"
         "${LIBC}/bionic/freebsd/no_equivalent.c"
         "${LIBC}/bionic/freebsd/mprotect.c"
+        "${LIBC}/bionic/freebsd/posix_fallocate.c"
         "${LIBC}/bionic/freebsd/prctl.c"
         "${LIBC}/bionic/freebsd/priority.c"
+        "${LIBC}/bionic/freebsd/prlimit.c"
         "${LIBC}/bionic/freebsd/qsort.c"
         "${LIBC}/bionic/freebsd/recvmmsg.c"
         "${LIBC}/bionic/freebsd/recvmsg.c"
@@ -352,18 +361,26 @@ libc_objects(libc_freebsd_port
         "${LIBC}/bionic/freebsd/sendmmsg.c"
         "${LIBC}/bionic/freebsd/sockopt.c"
         "${LIBC}/bionic/freebsd/statfs.c"
+        "${LIBC}/bionic/freebsd/swap.c"
         "${LIBC}/bionic/freebsd/sysctlbyname.c"
         "${LIBC}/bionic/freebsd/sysinfo.c"
         "${LIBC}/bionic/freebsd/timekeep.c"
         "${LIBC}/bionic/freebsd/umount.c"
         "${LIBC}/bionic/freebsd/uname.c"
         "${LIBC}/bionic/freebsd/xattr.c")
-# FreeBSD's realpath(3) and struct statfs have PATH_MAX buffers.
+# FreeBSD's realpath(3) and struct statfs have PATH_MAX buffers.  mount()
+# copies the data string to a 1,024-byte buffer and builds the nmount(2)
+# options in 64 iovecs.
 set_source_files_properties(
     "${LIBC}/upstream-freebsd/lib/libc/stdlib/realpath.c" PROPERTIES
     COMPILE_OPTIONS -Wframe-larger-than=4096)
-set_source_files_properties("${LIBC}/bionic/freebsd/statfs.c" PROPERTIES
+set_source_files_properties("${LIBC}/bionic/freebsd/statfs.c"
+    "${LIBC}/bionic/freebsd/mount.c" PROPERTIES
     COMPILE_OPTIONS -Wframe-larger-than=4096)
+# iconv.cpp gives a char32_t below 0x10000 to a char16_t parameter, and
+# clang 22 warns about that conversion.
+set_source_files_properties("${LIBC}/bionic/iconv.cpp" PROPERTIES
+    COMPILE_OPTIONS -Wno-character-conversion)
 
 # The allocator sources and flags follow their Android.bp files.  The
 # malloc front end follows libc/Android.bp for static and shared libc.
@@ -947,4 +964,5 @@ if(EXISTS "${AOSP_EXTERNAL}/googletest/googletest/src/gtest-all.cc")
 	include(boringssl.cmake)
 	include(logd.cmake)
 	include(selinux.cmake)
+	include(toybox.cmake)
 endif()

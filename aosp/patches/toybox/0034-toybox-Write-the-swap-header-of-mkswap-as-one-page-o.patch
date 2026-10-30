@@ -1,0 +1,51 @@
+From 821596c70695f8f9781baabb6e6b55197db16db0 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:43:21 +0530
+Subject: [PATCH] toybox: Write the swap header of mkswap as one page on
+ FreeBSD
+
+mkswap writes 516 bytes at offset 1024 and 10 bytes at the end of the
+first page.  A FreeBSD disk takes only whole sectors, so the writes
+failed with EINVAL ("xwrite: Invalid argument").  On FreeBSD read the
+first page, put the header in it, and write the page back whole.  The
+first 1024 bytes stay as they were, as before.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/mkswap.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/toys/other/mkswap.c b/toys/other/mkswap.c
+index 806e182..0ab6ce5 100644
+--- a/toys/other/mkswap.c
++++ b/toys/other/mkswap.c
+@@ -35,9 +35,25 @@ void mkswap_main(void)
+   xlseek(fd, 1024, SEEK_SET);
+   create_uuid(uuid);
+   if (TT.L) strncpy(label, TT.L, 15);
++#ifdef __FreeBSD__
++  // A FreeBSD disk reads and writes only whole sectors, so put the header
++  // in a copy of the first page and write the page back whole.
++  {
++    char *page = xmalloc(pagesize);
++
++    xlseek(fd, 0, SEEK_SET);
++    xreadall(fd, page, pagesize);
++    memcpy(page+1024, swap, 129*sizeof(unsigned int));
++    memcpy(page+pagesize-10, "SWAPSPACE2", 10);
++    xlseek(fd, 0, SEEK_SET);
++    xwrite(fd, page, pagesize);
++    free(page);
++  }
++#else
+   xwrite(fd, swap, 129*sizeof(unsigned int));
+   xlseek(fd, pagesize-10, SEEK_SET);
+   xwrite(fd, "SWAPSPACE2", 10);
++#endif
+   fsync(fd);
+ 
+   if (CFG_TOYBOX_FREE) close(fd);
+-- 
+2.50.1 (Apple Git-155)
+

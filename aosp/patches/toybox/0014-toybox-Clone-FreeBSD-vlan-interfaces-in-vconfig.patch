@@ -1,0 +1,67 @@
+From c14a9cca1f92218c259149e8112972f947328ad8 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:35:49 +0530
+Subject: [PATCH] toybox: Clone FreeBSD vlan interfaces in vconfig
+
+vconfig uses the Linux ioctl SIOCSIFVLAN.  FreeBSD clones a vlan(4)
+interface named IF.VID with SIOCIFCREATE2, which is also the default
+name that Linux gives, and removes it with SIOCIFDESTROY.  vconfig add
+and rem use them.  FreeBSD has no flags, priority maps or other name
+types of a VLAN interface, so set_flag, set_egress_map, set_ingress_map
+and set_name_type fail with EOPNOTSUPP.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/vconfig.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/toys/other/vconfig.c b/toys/other/vconfig.c
+index 83674d8..339e4e7 100644
+--- a/toys/other/vconfig.c
++++ b/toys/other/vconfig.c
+@@ -24,6 +24,36 @@ config VCONFIG
+ */
+ 
+ #include "toys.h"
++#ifdef __FreeBSD__
++// FreeBSD clones a vlan(4) interface named IF.VID with SIOCIFCREATE2, the
++// default name of Linux too, and removes it with SIOCIFDESTROY. It has no
++// flags, priority maps or other names of a VLAN interface.
++void vconfig_main(void)
++{
++  struct ifreq ifr;
++  char *cmd = *toys.optargs;
++  int fd = xsocket(AF_INET, SOCK_DGRAM, 0);
++  long vid = 0;
++
++  memset(&ifr, 0, sizeof(ifr));
++  if (!strcmp(cmd, "add")) {
++    if (toys.optargs[2]) vid = atolx_range(toys.optargs[2], 0, 4094);
++    if (vid == 1)
++      xprintf("WARNING: VLAN 1 does not work with many switches.\n");
++    snprintf(ifr.ifr_name, IFNAMSIZ, "%s.%ld", toys.optargs[1], vid);
++    xioctl(fd, SIOCIFCREATE2, &ifr);
++  } else if (!strcmp(cmd, "rem")) {
++    xstrncpy(ifr.ifr_name, toys.optargs[1], IFNAMSIZ);
++    xioctl(fd, SIOCIFDESTROY, &ifr);
++  } else if (!strcmp(cmd, "set_flag") || !strcmp(cmd, "set_egress_map")
++      || !strcmp(cmd, "set_ingress_map") || !strcmp(cmd, "set_name_type")) {
++    errno = EOPNOTSUPP;
++    perror_exit("%s", cmd);
++  } else perror_exit("Unknown command %s", cmd);
++  xclose(fd);
++  xprintf("Successful %s on device %s\n", cmd, toys.optargs[1]);
++}
++#else
+ #include <linux/if_vlan.h>
+ #include <linux/sockios.h>
+ 
+@@ -85,3 +115,4 @@ void vconfig_main(void)
+   xioctl(fd, SIOCSIFVLAN, &request);
+   xprintf("Successful %s on device %s\n", cmd, toys.optargs[1]);
+ }
++#endif
+-- 
+2.50.1 (Apple Git-155)
+

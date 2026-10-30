@@ -1,0 +1,39 @@
+From 25eb984fd750b6226ed5247cd9f0d1c035b94f0a Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:40:21 +0530
+Subject: [PATCH] toybox: Leave iuclc and xcase out of stty raw on FreeBSD
+
+stty raw clears -iuclc and -xcase, which the FreeBSD termios does not
+have, so stty raw and stty -cooked failed with "unknown option: iuclc".
+Clear the other flags of raw on FreeBSD.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/stty.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/toys/pending/stty.c b/toys/pending/stty.c
+index 7a654f5..3e455a2 100644
+--- a/toys/pending/stty.c
++++ b/toys/pending/stty.c
+@@ -456,9 +456,16 @@ void stty_main(void)
+         set_options(&new, "-parenb", "cs8", NULL);
+       } else if (!strcmp(arg, "raw")) {
+         // POSIX and "man stty" differ wildly. This is "man stty".
++#ifdef __FreeBSD__
++        // FreeBSD's termios has no iuclc and no xcase.
++        set_options(&new, "-ignbrk", "-brkint", "-ignpar", "-parmrk", "-inpck",
++          "-istrip", "-inlcr", "-igncr", "-icrnl", "-ixon", "-ixoff",
++          "-ixany", "-imaxbel", "-opost", "-isig", "-icanon", NULL);
++#else
+         set_options(&new, "-ignbrk", "-brkint", "-ignpar", "-parmrk", "-inpck",
+           "-istrip", "-inlcr", "-igncr", "-icrnl", "-ixon", "-ixoff", "-iuclc",
+           "-ixany", "-imaxbel", "-opost", "-isig", "-icanon", "-xcase", NULL);
++#endif
+         new.c_cc[VMIN] = 1;
+         new.c_cc[VTIME] = 0;
+       } else if (!strcmp(arg, "nl"))
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,41 @@
+From 70c70a5f37a76a998e7f0eb1ccbb615f0a3837ce Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Fri, 30 Oct 2026 02:32:51 +0530
+Subject: [PATCH] toybox: Skip an md(4) disk whose file is gone in losetup -j
+
+For -j, losetup finds the disks of FILE with stat() of the path that
+md(4) keeps.  When the file of another disk was gone, stat() failed and
+losetup -j FILE -d wrote "No such file or directory" and exited 1, but
+it detached the correct disks.  For -j, a disk whose file is gone is no
+match, as the Linux code compares the device and inode that the kernel
+gives.  -j FILE without -d no longer gives the error either.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/losetup.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/toys/other/losetup.c b/toys/other/losetup.c
+index 5d0e741..7ce2ac6 100644
+--- a/toys/other/losetup.c
++++ b/toys/other/losetup.c
+@@ -94,10 +94,12 @@ static int loopback_setup(char *device, char *file)
+       || (md.md_type != MD_VNODE && (errno = ENXIO))) {
+     // Only a vnode disk is a loop device: -d leaves a malloc or swap disk.
+     if (!FLAG(a) && !FLAG(j)) perror_msg_raw(device);
+-  } else if ((TT.j || !FLAG(d)) && stat(name, &st)) perror_msg_raw(name);
+-  else if (TT.j && (st.st_dev != TT.jdev || st.st_ino != TT.jino));
++  } else if (TT.j && (stat(name, &st) || st.st_dev != TT.jdev
++      || st.st_ino != TT.jino));
++  else if (!TT.j && !FLAG(d) && stat(name, &st)) perror_msg_raw(name);
+   else if (FLAG(d) || FLAG(c)) {
+-    // -d needs the file only for -j: the file of a disk can be gone.
++    // -d needs the file only for -j, where a disk whose file is gone is no
++    // match: the file of a disk can be gone.
+     // MDIOCDETACH and MDIOCRESIZE refuse the options that MDIOCQUERY gives,
+     // such as MD_READONLY, and MDIOCDETACH also a size.
+     md.md_options = 0;
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,139 @@
+From 3c79b0c4dd325dd76e469593088ec23cb1f49829 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:06:57 +0530
+Subject: [PATCH] toybox: Use the FreeBSD disk ioctls in blockdev, blkdiscard,
+ partprobe
+
+FreeBSD's disk(4) ioctls give what these commands ask of a disk:
+DIOCGMEDIASIZE the size in bytes, DIOCGSECTORSIZE the sector size,
+DIOCGFLUSH the flush of the write cache, and DIOCGDELETE the discard of
+a range, with the same offset and length as BLKDISCARD.  blockdev
+--getsize shifts the byte size to 512-byte sectors, as BLKGETSIZE
+gives.
+
+FreeBSD has no ioctl that re-reads a partition table: GEOM reads it
+again when the last writer closes the disk.  partprobe and blockdev
+--rereadpt open the disk for writing and close it.
+
+FreeBSD has no read-only flag, block size or readahead of a disk, and no
+secure discard or write of zeroes.  These options use request 0, which
+the kernel rejects with ENOTTY.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/blkdiscard.c | 12 ++++++++++++
+ toys/other/blockdev.c   | 23 +++++++++++++++++++++++
+ toys/other/partprobe.c  | 16 ++++++++++++++++
+ 3 files changed, 51 insertions(+)
+
+diff --git a/toys/other/blkdiscard.c b/toys/other/blkdiscard.c
+index 652d5eb..e606666 100644
+--- a/toys/other/blkdiscard.c
++++ b/toys/other/blkdiscard.c
+@@ -33,7 +33,19 @@ config BLKDISCARD
+ #define FOR_blkdiscard
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++#include <sys/disk.h>
++
++// FreeBSD's DIOCGDELETE takes the same offset and length as BLKDISCARD.
++// FreeBSD has no secure discard and no write of zeroes: the kernel rejects
++// request 0.
++#define BLKGETSIZE64 DIOCGMEDIASIZE
++#define BLKDISCARD DIOCGDELETE
++#define BLKSECDISCARD 0
++#define BLKZEROOUT 0
++#else
+ #include <linux/fs.h>
++#endif
+ 
+ GLOBALS(
+   long o, l;
+diff --git a/toys/other/blockdev.c b/toys/other/blockdev.c
+index 25553e9..6ea9bbc 100644
+--- a/toys/other/blockdev.c
++++ b/toys/other/blockdev.c
+@@ -31,7 +31,11 @@ config BLOCKDEV
+ 
+ #define FOR_blockdev
+ #include "toys.h"
++#ifdef __FreeBSD__
++#include <sys/disk.h>
++#else
+ #include <linux/fs.h>
++#endif
+ 
+ GLOBALS(
+   long setra, setbsz;
+@@ -39,8 +43,15 @@ GLOBALS(
+ 
+ void blockdev_main(void)
+ {
++#ifdef __FreeBSD__
++  // FreeBSD's disk(4) ioctls, in the same order.  FreeBSD has no read-only
++  // flag, block size or readahead of a disk: the kernel rejects request 0.
++  int cmds[] = {0, DIOCGFLUSH, 0, 0, DIOCGMEDIASIZE, DIOCGMEDIASIZE,
++                DIOCGMEDIASIZE, 0, 0, DIOCGSECTORSIZE, 0, 0, 0};
++#else
+   int cmds[] = {BLKRRPART, BLKFLSBUF, BLKRASET, BLKRAGET, BLKGETSIZE64, BLKGETSIZE, BLKGETSIZE64,
+                 BLKBSZSET, BLKBSZGET, BLKSSZGET, BLKROGET, BLKROSET, BLKROSET};
++#endif
+   char **ss;
+   long long val = 0;
+ 
+@@ -59,7 +70,19 @@ void blockdev_main(void)
+       else if (FLAG(setra)) val = TT.setra;
+       else val = FLAG(setro);
+ 
++#ifdef __FreeBSD__
++      // GEOM reads the partition table again when the last writer closes
++      // the disk.
++      if (flag == FLAG_rereadpt) {
++        xclose(xopen(*ss, O_WRONLY));
++        continue;
++      }
++#endif
+       xioctl(fd, cmds[i], &val);
++#ifdef __FreeBSD__
++      // DIOCGMEDIASIZE gives bytes, BLKGETSIZE gives 512-byte sectors.
++      if (flag == FLAG_getsize) val >>= 9;
++#endif
+ 
+       flag &= FLAG_setbsz|FLAG_setro|FLAG_flushbufs|FLAG_rereadpt|FLAG_setrw|FLAG_setbsz;
+       if (!flag) printf("%lld\n", val>>(9*FLAG(getsz)));
+diff --git a/toys/other/partprobe.c b/toys/other/partprobe.c
+index 69e6643..480535d 100644
+--- a/toys/other/partprobe.c
++++ b/toys/other/partprobe.c
+@@ -19,6 +19,21 @@ config PARTPROBE
+ 
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++// GEOM reads the partition table of a disk again when its last writer
++// closes it.
++void partprobe_main(void)
++{
++  char **arg;
++
++  for (arg = toys.optargs; *arg; arg++) {
++    int fd = open(*arg, O_WRONLY);
++
++    if (fd == -1) perror_msg_raw(*arg);
++    else close(fd);
++  }
++}
++#else
+ static void do_partprobe(int fd, char *name)
+ {
+   if (ioctl(fd, BLKRRPART, 0)) perror_msg("ioctl failed");
+@@ -28,3 +43,4 @@ void partprobe_main(void)
+ {
+   loopfiles(toys.optargs, do_partprobe);
+ }
++#endif
+-- 
+2.50.1 (Apple Git-155)
+

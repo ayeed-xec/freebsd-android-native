@@ -1,0 +1,67 @@
+From 076ad890c9f237325669ffdadc28a10eeb76672d Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Fri, 30 Oct 2026 01:12:51 +0530
+Subject: [PATCH] toybox: Detach and resize only the right md(4) disks in
+ losetup
+
+- losetup -j FILE -d detached each vnode disk that was not open,
+  because the detach came before the test of -j.  Test -j first, as the
+  Linux code does, and detach only the disks of FILE.  -d without -j
+  still needs no file, because the file of a disk can be gone.
+- MDIOCQUERY gives the flags of the disk in md_options, for example
+  MD_READONLY, and MDIOCRESIZE refuses them, so losetup -c of a
+  read-only disk failed with EINVAL.  Clear the options for -c, as
+  for -d.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/losetup.c | 32 ++++++++++++++++----------------
+ 1 file changed, 16 insertions(+), 16 deletions(-)
+
+diff --git a/toys/other/losetup.c b/toys/other/losetup.c
+index 0093780..5d0e741 100644
+--- a/toys/other/losetup.c
++++ b/toys/other/losetup.c
+@@ -94,22 +94,22 @@ static int loopback_setup(char *device, char *file)
+       || (md.md_type != MD_VNODE && (errno = ENXIO))) {
+     // Only a vnode disk is a loop device: -d leaves a malloc or swap disk.
+     if (!FLAG(a) && !FLAG(j)) perror_msg_raw(device);
+-  } else if (FLAG(d)) {
+-    // MDIOCDETACH takes no size and no option but MD_FORCE.
+-    md.md_mediasize = md.md_options = 0;
+-    if (ioctl(cfd, MDIOCDETACH, &md)) perror_msg_raw(device);
+-  } else if (stat(name, &st)) perror_msg_raw(name);
+-  else if (!TT.j || (st.st_dev == TT.jdev && st.st_ino == TT.jino)) {
+-    if (FLAG(c)) {
+-      md.md_mediasize = st.st_size;
+-      if (ioctl(cfd, MDIOCRESIZE, &md)) perror_msg_raw(device);
+-    } else {
+-      xprintf("%s: [%lld]:%llu (%s)", device, (long long)st.st_dev,
+-        (unsigned long long)st.st_ino, name);
+-      if (md.md_mediasize != st.st_size) xprintf(", sizelimit %llu",
+-        (unsigned long long)md.md_mediasize);
+-      xputc('\n');
+-    }
++  } else if ((TT.j || !FLAG(d)) && stat(name, &st)) perror_msg_raw(name);
++  else if (TT.j && (st.st_dev != TT.jdev || st.st_ino != TT.jino));
++  else if (FLAG(d) || FLAG(c)) {
++    // -d needs the file only for -j: the file of a disk can be gone.
++    // MDIOCDETACH and MDIOCRESIZE refuse the options that MDIOCQUERY gives,
++    // such as MD_READONLY, and MDIOCDETACH also a size.
++    md.md_options = 0;
++    md.md_mediasize = FLAG(d) ? 0 : st.st_size;
++    if (ioctl(cfd, FLAG(d) ? MDIOCDETACH : MDIOCRESIZE, &md))
++      perror_msg_raw(device);
++  } else {
++    xprintf("%s: [%lld]:%llu (%s)", device, (long long)st.st_dev,
++      (unsigned long long)st.st_ino, name);
++    if (md.md_mediasize != st.st_size) xprintf(", sizelimit %llu",
++      (unsigned long long)md.md_mediasize);
++    xputc('\n');
+   }
+   close(cfd);
+ 
+-- 
+2.50.1 (Apple Git-155)
+

@@ -49,7 +49,6 @@ dlfcn.dlopen_executable_by_absolute_path  env:linker64-run  GetExecutablePath() 
 elftls_dl.dlopen_ie_error  env:linker64-run  Test runs a helper program with execve; its PT_INTERP /system/bin/linker64 exists only in the jail.
 ifaddrs.getifaddrs_interfaces  abi:sys-class-net  Test compares the link entries with the symbolic links of /sys/class/net, and asysfs(4) has no /sys/class/net (register row 73).
 link.r_debug  env:linker64-run  AT_PHDR describes linker64, which has no DT_DEBUG; under PT_INTERP it describes the test binary.
-stdio.popen_socketpair_shutdown  tier0:toybox  Test runs uniq -c, a toybox program, which tier 0 does not build (plan M6). FreeBSD's uniq gives a count of 4 columns, not 7.
 stdio_ext.__fbufsize  abi:proc-blksize  stdio sizes the buffer from st_blksize; aprocfs gives 4096 for /proc/version, and Linux procfs gives 1024 (register row 74).
 sys_xattr.flistattr  flistxattr  extattr_list_fd(2) lists one name space in one call and in another format, so flistxattr() gives ENOTSUP (no one-call form).
 sys_xattr.flistattr_invalid_fd  flistxattr  flistxattr() gives ENOTSUP before any call, so a bad descriptor does not give EBADF.

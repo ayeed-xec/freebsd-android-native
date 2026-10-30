@@ -1,0 +1,40 @@
+From a8098f8bf6c9bebcc7b51f65d8549cc8788641c8 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 11:01:24 +0530
+Subject: [PATCH] toybox: Send a correct ICMP checksum in ping
+
+pingchksum() returned the sum, not its complement, and its carry test
+added 1 when the sum before a word was 0.  A Linux ICMP datagram socket
+computes the checksum again, so the value did not go out there.  A
+FreeBSD raw socket sends the ICMPv4 checksum of the program as it is,
+so the receiver dropped each echo request ("bad checksum") and ping
+127.0.0.1 lost every packet.  Test the carry with ">" and return the
+complement, as RFC 1071 says.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ping.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/toys/net/ping.c b/toys/net/ping.c
+index a25d0aa..f209cc2 100644
+--- a/toys/net/ping.c
++++ b/toys/net/ping.c
+@@ -81,11 +81,11 @@ static unsigned short pingchksum(unsigned short *data, int len)
+   while (len>0) {
+     d = *data++;
+     if (len == 1) d &= 255<<IS_BIG_ENDIAN;
+-    if (d >= (u += d)) u++;
++    if (d > (u += d)) u++;
+     len -= 2;
+   }
+ 
+-  return u;
++  return ~u;
+ }
+ 
+ static int xrecvmsgwait(int fd, struct msghdr *msg, int flag,
+-- 
+2.50.1 (Apple Git-155)
+

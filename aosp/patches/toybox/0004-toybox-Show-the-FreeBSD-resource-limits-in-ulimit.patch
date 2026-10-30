@@ -1,0 +1,69 @@
+From aa5973c58c7ac141761884105912d24ced436139 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 07:52:07 +0530
+Subject: [PATCH] toybox: Show the FreeBSD resource limits in ulimit
+
+FreeBSD has no limit of the Linux resources RLIMIT_MSGQUEUE,
+RLIMIT_NICE, RLIMIT_RTPRIO, RLIMIT_RTTIME and RLIMIT_SIGPENDING.  On
+another kernel ulimit gives them the value RLIM_NLIMITS, which the
+kernel rejects with EINVAL, and -a leaves them out.  The other limits
+are the same on FreeBSD.
+
+The fallback value 15 of RLIMIT_RTTIME is the Linux number; on FreeBSD
+15 is RLIMIT_PIPEBUF.  Keep the fallback for Linux only.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ lib/portability.h   |  2 +-
+ toys/posix/ulimit.c | 14 ++++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/lib/portability.h b/lib/portability.h
+index ed96739..535e081 100644
+--- a/lib/portability.h
++++ b/lib/portability.h
+@@ -73,7 +73,7 @@
+ #define O_DIRECT 0x4000
+ #endif
+ 
+-#ifndef RLIMIT_RTTIME // Commit 78f2c7db6068f 2008
++#if defined(__linux__) && !defined(RLIMIT_RTTIME) // Commit 78f2c7db6068f 2008
+ #define RLIMIT_RTTIME 15
+ #endif
+ 
+diff --git a/toys/posix/ulimit.c b/toys/posix/ulimit.c
+index ffb1eb3..14313ef 100644
+--- a/toys/posix/ulimit.c
++++ b/toys/posix/ulimit.c
+@@ -54,6 +54,15 @@ GLOBALS(
+ int prlimit(pid_t pid, int resource, const struct rlimit *new_limit,
+   struct rlimit *old_limit);
+ 
++#ifndef __linux__
++// The kernel has no limit of these Linux resources and rejects RLIM_NLIMITS.
++#define RLIMIT_MSGQUEUE RLIM_NLIMITS
++#define RLIMIT_NICE RLIM_NLIMITS
++#define RLIMIT_RTPRIO RLIM_NLIMITS
++#define RLIMIT_RTTIME RLIM_NLIMITS
++#define RLIMIT_SIGPENDING RLIM_NLIMITS
++#endif
++
+ // I'd like to sort the RLIMIT values 0-15, but mips, alpha and sparc
+ // override the asm-generic values for 5-9, and alphabetical order is nice for
+ // humans anyway.
+@@ -84,6 +93,11 @@ void ulimit_main(void)
+   for (i=0; i<sizeof(map); i++) {
+     int get = toys.optflags&(FLAG_a|(1<<i));
+ 
++#ifndef __linux__
++    // -a leaves out the limits that the kernel does not have.
++    if (FLAG(a) && map[i] == RLIM_NLIMITS) continue;
++#endif
++
+     if (get && prlimit(TT.P, map[i], 0, &rr)) perror_exit("-%c", flags[i]);
+     if (!toys.optc) {
+       if (FLAG(a)) printf("-%c: %-25s ", flags[i], desc[i]);
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,195 @@
+From 31e9529d21ea211766ff2a56b0694cce2cc471e1 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:42:46 +0530
+Subject: [PATCH] toybox: Send the IPv4 options of ifconfig in one request on
+ FreeBSD
+
+FreeBSD sets an IPv4 address, its mask and its broadcast or destination
+address in one SIOCAIFADDR.  The FreeBSD backend sent one request for
+each option, and two cases failed:
+
+- broadcast, dstaddr and pointopoint copied the mask of SIOCGIFNETMASK
+  as the kernel gives it.  The kernel trims the length of a mask, and a
+  mask that it made has no family, so SIOCAIFADDR refused it with
+  EINVAL.
+- An address alone on a point-to-point interface, such as tun(4), gave
+  EDESTADDRREQ: the kernel needs the destination in the same request.
+
+Collect the IPv4 options in a row and send them in one request before
+the next other option, or at the end.  A part that the options do not
+give comes from the first address: the address, the mask unless the
+address is new, and the destination of a point-to-point interface.  Set
+the length and the family of each part that comes from the kernel.  So
+"ifconfig tun0 10.0.0.1 pointopoint 10.0.0.2" works, as on Linux.  A
+point-to-point interface with no address and no destination still gives
+EDESTADDRREQ.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ifconfig.c | 97 +++++++++++++++++++++++++++++++--------------
+ 1 file changed, 67 insertions(+), 30 deletions(-)
+
+diff --git a/toys/net/ifconfig.c b/toys/net/ifconfig.c
+index 7a1cd06..b46737f 100644
+--- a/toys/net/ifconfig.c
++++ b/toys/net/ifconfig.c
+@@ -452,38 +452,61 @@ static void show_iface(char *iface_name)
+ #ifdef __FreeBSD__
+ // FreeBSD sets an IPv4 address with its mask and its broadcast or
+ // destination address in one SIOCAIFADDR, and no longer takes SIOCSIFADDR.
+-// A new address replaces the first one, as FreeBSD's ifconfig does; netmask,
+-// broadcast and the destination keep the address and change one part.
+-static void bsd_inet(struct ifreq *ifre, char *what, char *arg)
++// The IPv4 options in a row fill sin[]: part 0 is the address, 1 the mask,
++// 2 the broadcast or destination address.
++static void bsd_inet_part(struct sockaddr_in *sin, int part, char *arg)
++{
++  int mask = -1;
++
++  memset(sin+part, 0, sizeof(*sin));
++  sin[part].sin_len = sizeof(*sin);
++  sin[part].sin_family = AF_INET;
++  // "default" is INADDR_ANY, which only deletes the first address.
++  if (strcmp(arg, "default"))
++    mask = get_addrinfo(arg, AF_INET, &sin[part].sin_addr);
++  if (!part && mask >= 0) {
++    sin[1].sin_len = sizeof(*sin);
++    sin[1].sin_family = AF_INET;
++    sin[1].sin_addr.s_addr = mask ? htonl(~0U<<(32-mask)) : 0;
++  }
++}
++
++// Send the parts of sin[] in one request and clear them. The address, the
++// mask of an old address and the destination of a point-to-point interface,
++// which it needs, come from the first address when sin[] has none. A new
++// address replaces the first one, as FreeBSD's ifconfig does.
++static void bsd_inet(struct ifreq *ifre, struct sockaddr_in *sin)
+ {
+   struct ifaliasreq ifra;
+-  struct sockaddr_in *sin[3] = {(void *)&ifra.ifra_addr,
+-    (void *)&ifra.ifra_mask, (void *)&ifra.ifra_broadaddr};
+-  int mask, part = !what ? 0 : strcmp(what, "netmask") ? 2 : 1;
++  struct sockaddr *sa[3] = {&ifra.ifra_addr, &ifra.ifra_mask,
++    &ifra.ifra_broadaddr};
++  unsigned long get[3] = {SIOCGIFADDR, SIOCGIFNETMASK, 0};
++  int i;
+ 
+   memset(&ifra, 0, sizeof(ifra));
+   xstrncpy(ifra.ifra_name, ifre->ifr_name, IFNAMSIZ);
+-  if (part) {
+-    xioctl(TT.sockfd, SIOCGIFADDR, ifre);
+-    memcpy(sin[0], &ifre->ifr_addr, sizeof(*sin[0]));
+-    if (!ioctl(TT.sockfd, SIOCGIFNETMASK, ifre))
+-      memcpy(sin[1], &ifre->ifr_addr, sizeof(*sin[1]));
+-  } else {
++  xioctl(TT.sockfd, SIOCGIFFLAGS, ifre);
++  if (ifre->ifr_flags & IFF_POINTOPOINT) get[2] = SIOCGIFDSTADDR;
++  if (sin->sin_len) get[1] = 0;
++  for (i = 0; i<3; i++) {
++    if (sin[i].sin_len) memcpy(sa[i], sin+i, sizeof(*sin));
++    else if (get[i] && !ioctl(TT.sockfd, get[i], ifre)) {
++      // The kernel trims the length of a mask, and a mask that it made has
++      // no family.
++      memcpy(sa[i], &ifre->ifr_addr, sizeof(*sin));
++      sa[i]->sa_len = sizeof(*sin);
++      sa[i]->sa_family = AF_INET;
++    } else if (!i) perror_exit_raw(ifre->ifr_name);
++  }
++  if (sin->sin_len) {
+     // An address of INADDR_ANY deletes the first address.
+     memset(&ifre->ifr_addr, 0, sizeof(ifre->ifr_addr));
+     if (ioctl(TT.sockfd, SIOCDIFADDR, ifre) && errno != EADDRNOTAVAIL)
+       perror_exit_raw(ifre->ifr_name);
+-    if (!strcmp(arg, "default")) return;
+-  }
+-  sin[part]->sin_len = sizeof(struct sockaddr_in);
+-  sin[part]->sin_family = AF_INET;
+-  mask = get_addrinfo(arg, AF_INET, &sin[part]->sin_addr);
+-  if (!part && mask >= 0) {
+-    sin[1]->sin_len = sizeof(struct sockaddr_in);
+-    sin[1]->sin_family = AF_INET;
+-    sin[1]->sin_addr.s_addr = mask ? htonl(~0U<<(32-mask)) : 0;
+   }
+-  xioctl(TT.sockfd, SIOCAIFADDR, &ifra);
++  if (!sin->sin_len || sin->sin_addr.s_addr)
++    xioctl(TT.sockfd, SIOCAIFADDR, &ifra);
++  memset(sin, 0, 3*sizeof(*sin));
+ }
+ 
+ // FreeBSD keeps the flags of an interface in two halves. Promiscuous and
+@@ -544,7 +567,8 @@ void ifconfig_main(void)
+   // multicast, broadcast and point-to-point flags.
+   char *none[] = {"txqueuelen", "mem_start", "io_addr", "irq", "keepalive",
+     "outfill", "multicast", "pointopoint", "broadcast"};
+-  int i;
++  struct sockaddr_in sin[3];
++  int i, part, inet = 0;
+ 
+   TT.sockfd = xsocket(AF_INET, SOCK_DGRAM, 0);
+   if (toys.optc < 2) {
+@@ -553,6 +577,7 @@ void ifconfig_main(void)
+   }
+ 
+   memset(&ifre, 0, sizeof(struct ifreq));
++  memset(sin, 0, sizeof(sin));
+   xstrncpy(ifre.ifr_name, *argv, IFNAMSIZ);
+ 
+   while (*++argv) {
+@@ -560,13 +585,26 @@ void ifconfig_main(void)
+     int rev = (*s == '-');
+ 
+     s += rev;
++    // The IPv4 options in a row make one request, before the next option.
++    part = rev ? -1 : (isdigit(*s) || !strcmp(s, "default")) ? 0
++      : !strcmp(s, "netmask") ? 1 : (!strcmp(s, "broadcast")
++      || !strcmp(s, "dstaddr") || !strcmp(s, "pointopoint")) ? 2 : -1;
++    if (part < 0 && inet) {
++      bsd_inet(&ifre, sin);
++      inet = 0;
++    }
+     for (i = 0; i<ARRAY_LEN(flag); i++) if (!strcmp(s, flag[i].name)) break;
+     if (i<ARRAY_LEN(flag)) {
+       bsd_flags(&ifre, rev ? flag[i].off : flag[i].on,
+         rev ? flag[i].on : flag[i].off);
+-    } else if (!rev && (isdigit(*s) || !strcmp(s, "default"))) {
+-      bsd_inet(&ifre, 0, s);
++    } else if (!part) {
++      bsd_inet_part(sin, 0, s);
+       bsd_flags(&ifre, IFF_UP, 0);
++      inet = 1;
++    } else if (part > 0) {
++      if (!*++argv) error_exit("%s needs argument", s);
++      bsd_inet_part(sin, part, *argv);
++      inet = 1;
+     } else if (!strcmp(s, "inet") || !strcmp(s, "inet6")) continue;
+     else if (!strcmp(s, "add") || !strcmp(s, "del")) {
+       if (!argv[1]) help_exit("%s", s);
+@@ -589,13 +627,11 @@ void ifconfig_main(void)
+       ifre.ifr_addr.sa_family = AF_LINK;
+       for (i = 0; i<6; i++) ifre.ifr_addr.sa_data[i] = mac[i];
+       xioctl(TT.sockfd, SIOCSIFLLADDR, &ifre);
+-    } else if (!rev && (!strcmp(s, "netmask") || !strcmp(s, "dstaddr")
+-        || !strcmp(s, "broadcast") || !strcmp(s, "pointopoint")
+-        || !strcmp(s, "mtu") || !strcmp(s, "metric") || !strcmp(s, "rename")))
++    } else if (!rev && (!strcmp(s, "mtu") || !strcmp(s, "metric")
++        || !strcmp(s, "rename")))
+     {
+       if (!*++argv) error_exit("%s needs argument", s);
+-      if (strchr("bdnp", *s)) bsd_inet(&ifre, s, *argv);
+-      else if (*s=='r') {
++      if (*s=='r') {
+         ifre.ifr_data = *argv;
+         xioctl(TT.sockfd, SIOCSIFNAME, &ifre);
+         xstrncpy(ifre.ifr_name, *argv, IFNAMSIZ);
+@@ -611,6 +647,7 @@ void ifconfig_main(void)
+       perror_exit("%s", s);
+     }
+   }
++  if (inet) bsd_inet(&ifre, sin);
+   close(TT.sockfd);
+ }
+ #else
+-- 
+2.50.1 (Apple Git-155)
+

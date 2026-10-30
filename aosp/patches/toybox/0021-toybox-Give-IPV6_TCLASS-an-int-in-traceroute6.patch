@@ -1,0 +1,35 @@
+From e5eb45f1929c3cdcc67fe2bf265e02e48336afa6 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 11:01:24 +0530
+Subject: [PATCH] toybox: Give IPV6_TCLASS an int in traceroute6
+
+traceroute6 gave the long TT.tos to setsockopt(IPV6_TCLASS), with its
+size.  Linux reads an int from a longer value, but FreeBSD takes only
+an int and fails with EINVAL, so traceroute6 stopped before it sent a
+probe.  Give the option an int.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/traceroute.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/toys/pending/traceroute.c b/toys/pending/traceroute.c
+index 6cc6a1c..e2c8a5e 100644
+--- a/toys/pending/traceroute.c
++++ b/toys/pending/traceroute.c
+@@ -580,8 +580,9 @@ void traceroute_main(void)
+         (setsockopt(TT.snd_sock, IPPROTO_IP, IP_DONTFRAG, &set,
+                     sizeof(set)) < 0)) perror_exit("IP_DONTFRAG failed ");
+ #endif
+-  } else if (setsockopt(TT.snd_sock, IPPROTO_IPV6, IPV6_TCLASS, &TT.tos,
+-        sizeof(TT.tos)) < 0) perror_exit("IPV6_TCLASS %ld failed ", TT.tos);
++  } else if (setsockopt(TT.snd_sock, IPPROTO_IPV6, IPV6_TCLASS,
++        &(int){TT.tos}, sizeof(int)) < 0)  // an int: FreeBSD rejects a long
++    perror_exit("IPV6_TCLASS %ld failed ", TT.tos);
+ 
+   set_flag_dr(TT.snd_sock);
+   TT.packet = xzalloc(TT.msg_len);
+-- 
+2.50.1 (Apple Git-155)
+

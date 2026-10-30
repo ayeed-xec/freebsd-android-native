@@ -40,4 +40,4 @@
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-liblog.__android_log_btwrite__android_logger_list_read  tier0:toybox  As root the test runs grep on /proc/net/unix to see the logdw socket: tier 0 has no toybox, and aprocfs has no /proc/net/unix. The rest of the test passes (m: run as the shell user).
+liblog.__android_log_btwrite__android_logger_list_read  abi:proc-net-unix  As root the test runs grep on /proc/net/unix to see the logdw socket. toybox grep runs, but aprocfs has no /proc/net/unix, so the check after __android_log_close() fails. The rest of the test passes (m: run as the shell user).

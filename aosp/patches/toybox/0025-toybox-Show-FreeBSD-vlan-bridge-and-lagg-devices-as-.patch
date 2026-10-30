@@ -1,0 +1,34 @@
+From c97263356e5450aed209925964417bdffda076e5 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 20:35:19 +0530
+Subject: [PATCH] toybox: Show FreeBSD vlan, bridge and lagg devices as
+ Ethernet
+
+vlan(4), if_bridge(4) and lagg(4) devices have an Ethernet address, but
+their AF_LINK types are IFT_L2VLAN, IFT_BRIDGE and IFT_IEEE8023ADLAG, so
+ifconfig showed "Link encap:UNSPEC" with no HWaddr.  Linux gives these
+devices the type ARPHRD_ETHER.  Show them as Ethernet with the address.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ifconfig.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/toys/net/ifconfig.c b/toys/net/ifconfig.c
+index afa0ec4..7a1cd06 100644
+--- a/toys/net/ifconfig.c
++++ b/toys/net/ifconfig.c
+@@ -160,6 +160,9 @@ static void display_ifconfig(char *name, int always, unsigned long long val[])
+ 
+         if (sdl && sdl->sdl_family == AF_LINK && !strcmp(ifa->ifa_name, name)) {
+           hwtype = sdl->sdl_type;
++          // Linux calls vlan, bridge and lagg devices Ethernet too.
++          if (hwtype == IFT_L2VLAN || hwtype == IFT_BRIDGE ||
++              hwtype == IFT_IEEE8023ADLAG) hwtype = IFT_ETHER;
+           if (sdl->sdl_alen == 6) memcpy(hw, LLADDR(sdl), 6);
+           break;
+         }
+-- 
+2.50.1 (Apple Git-155)
+

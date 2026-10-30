@@ -1,0 +1,148 @@
+From a1ec1d3a408ceab3103f186b5258966a6219c966 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 07:50:29 +0530
+Subject: [PATCH] toybox: Use the bionic code paths for bionic on FreeBSD
+
+Android code on FreeBSD uses bionic, not FreeBSD's libc, and the
+compiler defines __FreeBSD__ for it.  lib/portability.* test __FreeBSD__
+for libc questions: the statfs fields, the mount list, the xattr
+functions, <byteswap.h>, <pty.h> and the headers of statfs, swap and
+sysinfo.  These tests now ask __BIONIC__ first, as bionic's convention
+says: libc questions test __BIONIC__, kernel questions test __linux__ or
+__FreeBSD__.
+
+Kernel questions keep their FreeBSD answers.  tail -f takes the inotify
+path, which FreeBSD 15 has natively.  The dev_t macros come from
+<sys/sysmacros.h>, which gives FreeBSD's encoding.  copy_file_range()
+uses FreeBSD's SYS_copy_file_range, and the API-level check of Android's
+seccomp policy stays for Linux.
+
+Android (bionic on Linux) and the other hosts do not change.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ lib/portability.c | 15 +++++++++------
+ lib/portability.h | 11 ++++++-----
+ 2 files changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/lib/portability.c b/lib/portability.c
+index 6acb0ec..066ee05 100644
+--- a/lib/portability.c
++++ b/lib/portability.c
+@@ -54,7 +54,7 @@ void xgetrandom(void *buf, unsigned buflen)
+ // Get list of mounted filesystems, including stat and statvfs info.
+ // Returns a reversed list, which is good for finding overmounts and such.
+ 
+-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
++#if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__)) || defined(__OpenBSD__)
+ 
+ #include <sys/mount.h>
+ 
+@@ -169,7 +169,7 @@ struct mtab_list *xgetmountlist(char *path)
+ 
+ #endif
+ 
+-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
++#if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__)) || defined(__OpenBSD__)
+ 
+ #include <sys/event.h>
+ 
+@@ -313,7 +313,7 @@ ssize_t xattr_fset(int fd, const char* name,
+   return fsetxattr(fd, name, value, size, 0, flags);
+ }
+ 
+-#elif !defined(__FreeBSD__) && !defined(__OpenBSD__)
++#elif defined(__BIONIC__) || (!defined(__FreeBSD__) && !defined(__OpenBSD__))
+ 
+ ssize_t xattr_get(const char *path, const char *name, void *value, size_t size)
+ {
+@@ -550,7 +550,7 @@ int dev_makedev(int major, int minor)
+ 
+ char *fs_type_name(struct statfs *statfs)
+ {
+-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
++#if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__)) || defined(__OpenBSD__)
+   // macOS has an `f_type` field, but assigns values dynamically as filesystems
+   // are registered. They do give you the name directly though, so use that.
+   return statfs->f_fstypename;
+@@ -619,7 +619,7 @@ int get_block_device_size(int fd, unsigned long long* size)
+ }
+ #endif
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) && defined(__linux__)
+ static int android_api_level(void)
+ {
+   // Cached so we don't do a system property lookup on every call.
+@@ -632,13 +632,16 @@ static int android_api_level(void)
+ 
+ static int check_copy_file_range(void)
+ {
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) && defined(__linux__)
+   // Android's had the constant for years, but seccomp means you'll get
+   // SIGSYS if you try the system call before 2023's Android U.
+   return (android_api_level() >= __ANDROID_API_U__) ? __NR_copy_file_range : 0;
+ #elif defined(__NR_copy_file_range)
+   // glibc added this constant in git at the end of 2017, shipped 2018-02.
+   return __NR_copy_file_range;
++#elif defined(SYS_copy_file_range)
++  // FreeBSD has the same call under its own number.
++  return SYS_copy_file_range;
+ #else
+   return 0;
+ #endif
+diff --git a/lib/portability.h b/lib/portability.h
+index e87b919..aeee60b 100644
+--- a/lib/portability.h
++++ b/lib/portability.h
+@@ -142,7 +142,7 @@ void *memmem(const void *haystack, size_t haystack_length,
+ #define bswap_16(x) OSSwapInt16(x)
+ #define bswap_32(x) OSSwapInt32(x)
+ #define bswap_64(x) OSSwapInt64(x)
+-#elif defined(__FreeBSD__) || defined(__OpenBSD__)
++#elif (defined(__FreeBSD__) && !defined(__BIONIC__)) || defined(__OpenBSD__)
+ #include <sys/endian.h>
+ #define bswap_16(x) bswap16(x)
+ #define bswap_32(x) bswap32(x)
+@@ -169,15 +169,16 @@ void *memmem(const void *haystack, size_t haystack_length,
+ 
+ // Linux headers not listed by POSIX or LSB
+ #include <sys/mount.h>
+-#ifdef __linux__
++#if defined(__linux__) || defined(__BIONIC__)
+ #include <sys/statfs.h>
++#include <sys/sysmacros.h>
+ #include <sys/swap.h>
+ #include <sys/sysinfo.h>
+ #endif
+ 
+ #ifdef __APPLE__
+ #include <util.h>
+-#elif !defined(__FreeBSD__) && !defined(__OpenBSD__)
++#elif defined(__BIONIC__) || (!defined(__FreeBSD__) && !defined(__OpenBSD__))
+ #include <pty.h>
+ #else
+ #include <termios.h>
+@@ -193,7 +194,7 @@ void *memmem(const void *haystack, size_t haystack_length,
+ int personality(int);
+ #endif
+ 
+-#if defined(__APPLE__) || defined(__linux__)
++#if defined(__APPLE__) || defined(__linux__) || defined(__BIONIC__)
+ // Linux and macOS has both have getxattr and friends in <sys/xattr.h>, but
+ // they aren't compatible.
+ #include <sys/xattr.h>
+@@ -217,7 +218,7 @@ int posix_fallocate(int, off_t, off_t);
+ #include <xlocale.h>
+ #endif
+ 
+-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
++#if defined(__APPLE__) || (defined(__FreeBSD__) && !defined(__BIONIC__)) || defined(__OpenBSD__)
+ static inline long statfs_bsize(struct statfs *sf) { return sf->f_iosize; }
+ static inline long statfs_frsize(struct statfs *sf) { return sf->f_bsize; }
+ #else
+-- 
+2.50.1 (Apple Git-155)
+

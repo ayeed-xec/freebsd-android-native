@@ -1,0 +1,33 @@
+From 7c61b1ef1077d6334131ec30044f32ed020916f5 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:44:52 +0530
+Subject: [PATCH] toybox: Leave room for new messages in the FreeBSD dmesg
+ buffer
+
+dmesg asks kern.msgbuf for its size and then reads it.  A message that
+comes between the two calls makes the buffer too small, and the second
+call then fails with ENOMEM.  Add an eighth to the size, as FreeBSD's
+dmesg(8) does.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/lsb/dmesg.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/toys/lsb/dmesg.c b/toys/lsb/dmesg.c
+index d82f12d..4a3b282 100644
+--- a/toys/lsb/dmesg.c
++++ b/toys/lsb/dmesg.c
+@@ -182,6 +182,8 @@ klogctl_mode:
+       size_t len = 0;
+ 
+       if (sysctlbyname("kern.msgbuf", 0, &len, 0, 0)) perror_exit("msgbuf");
++      // Room for the messages that come between the two calls.
++      len += len/8;
+       data = from = xmalloc(len+1);
+       if (sysctlbyname("kern.msgbuf", data, &len, 0, 0)) perror_exit("msgbuf");
+       data[size = len] = 0;
+-- 
+2.50.1 (Apple Git-155)
+

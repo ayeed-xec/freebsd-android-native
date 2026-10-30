@@ -1,0 +1,99 @@
+From 92289d426ce893728afc8129e2567fde63c3ba6e Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 07:50:56 +0530
+Subject: [PATCH] toybox: Fail Linux-only system calls with ENOSYS on other
+ kernels
+
+ionice and iorenice (ioprio_get, ioprio_set), uclampset (sched_setattr,
+sched_getattr) and pivot_root call Linux system calls by number.  The
+FreeBSD kernel has no I/O priority, no utilization clamp and no
+pivot_root, and bionic on FreeBSD has no Linux system call numbers.
+
+linux_syscall() is syscall() on Linux.  On another kernel it fails with
+ENOSYS, as a Linux kernel without the call does, so these commands
+build and report the error.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ lib/portability.h       | 8 ++++++++
+ toys/other/ionice.c     | 4 ++--
+ toys/other/pivot_root.c | 2 +-
+ toys/other/uclampset.c  | 4 ++--
+ 4 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/lib/portability.h b/lib/portability.h
+index aeee60b..ed96739 100644
+--- a/lib/portability.h
++++ b/lib/portability.h
+@@ -285,6 +285,14 @@ typedef float FLOAT;
+ pid_t xfork(void);
+ #endif
+ 
++// Linux system calls that the kernel does not have fail with ENOSYS, as on a
++// Linux kernel without them.
++#ifdef __linux__
++#define linux_syscall syscall
++#else
++#define linux_syscall(...) (errno = ENOSYS, -1)
++#endif
++
+ // gratuitously memsets ALL the extra space with zeroes (not just a terminator)
+ // but to make up for it truncating doesn't null terminate the output at all.
+ // There are occasions to use it, but it is NOT A GENERAL PURPOSE FUNCTION.
+diff --git a/toys/other/ionice.c b/toys/other/ionice.c
+index e853e3f..5e3b404 100644
+--- a/toys/other/ionice.c
++++ b/toys/other/ionice.c
+@@ -44,7 +44,7 @@ GLOBALS(
+ 
+ static int xioprio_get(void)
+ {
+-  int p = syscall(__NR_ioprio_get, 1, (int)TT.p);
++  int p = linux_syscall(__NR_ioprio_get, 1, (int)TT.p);
+ 
+   if (p==-1) perror_exit("read priority");
+ 
+@@ -53,7 +53,7 @@ static int xioprio_get(void)
+ 
+ static void xioprio_set(void)
+ {
+-  if (-1 == syscall(__NR_ioprio_set, 1, (int)TT.p, (int)((TT.c<<13)|TT.n)))
++  if (-1 == linux_syscall(__NR_ioprio_set, 1, (int)TT.p, (int)((TT.c<<13)|TT.n)))
+     if (!FLAG(t)) perror_exit("set priority");
+ }
+ 
+diff --git a/toys/other/pivot_root.c b/toys/other/pivot_root.c
+index f9a8918..1dc085a 100644
+--- a/toys/other/pivot_root.c
++++ b/toys/other/pivot_root.c
+@@ -24,6 +24,6 @@ config PIVOT_ROOT
+ 
+ void pivot_root_main(void)
+ {
+-  if (syscall(__NR_pivot_root, toys.optargs[0], toys.optargs[1]))
++  if (linux_syscall(__NR_pivot_root, toys.optargs[0], toys.optargs[1]))
+     perror_exit("'%s' -> '%s'", toys.optargs[0], toys.optargs[1]);
+ }
+diff --git a/toys/other/uclampset.c b/toys/other/uclampset.c
+index acf50bd..e7711e0 100644
+--- a/toys/other/uclampset.c
++++ b/toys/other/uclampset.c
+@@ -44,12 +44,12 @@ static void do_uclampset(pid_t pid)
+   char *comm, buf[32];
+ 
+   if (FLAG(R)|FLAG(m)|FLAG(M)) {
+-    if (syscall(__NR_sched_setattr, pid, sa, 0))
++    if (linux_syscall(__NR_sched_setattr, pid, sa, 0))
+       perror_exit("sched_setattr for pid %d", pid);
+   } else {
+     sprintf(buf, "/proc/%u/comm", pid);
+     comm = chomp(xreadfile(buf, 0, 0));
+-    if (syscall(__NR_sched_getattr, pid, sa, *sa, 0))
++    if (linux_syscall(__NR_sched_getattr, pid, sa, *sa, 0))
+       perror_exit("sched_getattr for pid %d", pid);
+     printf("%s (%d) util_clamp: min: %u max: %u\n", comm, pid, sa[12], sa[13]);
+     free(comm);
+-- 
+2.50.1 (Apple Git-155)
+

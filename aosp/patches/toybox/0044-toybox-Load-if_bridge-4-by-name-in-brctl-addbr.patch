@@ -1,0 +1,48 @@
+From 08e692812de1eca8fa33a377c7f2cef030fef012 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Fri, 30 Oct 2026 11:15:08 +0530
+Subject: [PATCH] toybox: Load if_bridge(4) by name in brctl addbr
+
+FreeBSD has a bridge cloner only when if_bridge.ko is loaded.  Without
+the module, SIOCIFCREATE2 gives EINVAL and brctl addbr failed.  When
+the create gives EINVAL, brctl now loads the module by name with
+kldload(2), as ifconfig(8) does, and tries the create again.  The error
+of the second create is the one that brctl shows.  In a jail kldload(2)
+gives EPERM, so there the host must load the module.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/brctl.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/toys/pending/brctl.c b/toys/pending/brctl.c
+index de88f7f..290747e 100644
+--- a/toys/pending/brctl.c
++++ b/toys/pending/brctl.c
+@@ -34,6 +34,7 @@ config BRCTL
+ #define FOR_brctl
+ #include "toys.h"
+ #ifdef __FreeBSD__
++#include <sys/linker.h>
+ #include <ifaddrs.h>
+ #include <net/if_bridgevar.h>
+ #include <net/if_dl.h>
+@@ -126,7 +127,13 @@ void br_addbr(char **argv)
+ 
+   memset(&ifr, 0, sizeof(ifr));
+   strcpy(ifr.ifr_name, "bridge");
+-  xioctl(TT.sockfd, SIOCIFCREATE2, &ifr);
++  // There is no bridge cloner until if_bridge(4) is loaded, and the create
++  // fails with EINVAL. Load the module by name as ifconfig(8) does, then try
++  // again.
++  if (ioctl(TT.sockfd, SIOCIFCREATE2, &ifr)) {
++    if (errno == EINVAL) kldload("if_bridge");
++    xioctl(TT.sockfd, SIOCIFCREATE2, &ifr);
++  }
+   if (strcmp(ifr.ifr_name, *argv)) {
+     ifr.ifr_data = *argv;
+     if (ioctl(TT.sockfd, SIOCSIFNAME, &ifr)) {
+-- 
+2.50.1 (Apple Git-155)
+

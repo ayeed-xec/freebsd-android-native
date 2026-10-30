@@ -1,0 +1,282 @@
+From 369aa5881010dc8bb1271c637be8aa37136790ef Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:55:38 +0530
+Subject: [PATCH] toybox: Use FreeBSD gpioc(4) in the gpio commands
+
+The gpio commands use the Linux GPIO character device.  FreeBSD's
+gpioc(4) device /dev/gpiocN has the pins of one controller.
+GPIOMAXPIN gives the number of pins, GPIOGETCONFIG the name and flags
+of a pin, and GPIOGET and GPIOSET its value.
+
+FreeBSD has no line handle.  gpioget and gpioset set the direction of
+each pin with GPIOSETCONFIG and keep its other flags.  -l inverts the
+value in gpioget and gpioset.  gpioset checks each LINE=VALUE before it
+sets a pin.
+
+FreeBSD tells no label of a chip, so gpiodetect shows the description
+of the controller.  The new function controller_desc() in
+lib/portability.c gets it with sysctl, from the parent of the gpiobus(4)
+that the gpioc is on.  FreeBSD also tells no user of a pin, so gpioinfo shows
+"unknown" in that column and no [used].  A pin with an inverted input
+or output shows active-low.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ lib/portability.c  |  26 ++++++++++
+ lib/portability.h  |   4 ++
+ toys/other/gpiod.c | 117 ++++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 145 insertions(+), 2 deletions(-)
+
+diff --git a/lib/portability.c b/lib/portability.c
+index 066ee05..3b8f4e6 100644
+--- a/lib/portability.c
++++ b/lib/portability.c
+@@ -746,3 +746,29 @@ int rename_exchange(char *file1, char *file2)
+   return ENOSYS;
+ #endif
+ }
++
++#ifdef __FreeBSD__
++#include <sys/sysctl.h>
++
++// Get the description of the controller of a device: the parent of the bus
++// that the device is on, as gpioc(4) is on gpiobus(4) and iic(4) on iicbus(4).
++void controller_desc(char *name, char *desc, int size)
++{
++  char oid[64], dev[64], *buf;
++  size_t len;
++  int i, n;
++
++  xstrncpy(dev, name, sizeof(dev));
++  *desc = 0;
++  for (i = 0; i < 3; i++) {
++    n = strcspn(dev, "0123456789");
++    snprintf(oid, sizeof(oid), "dev.%.*s.%s.%s", n, dev, dev+n,
++      i < 2 ? "%parent" : "%desc");
++    buf = i < 2 ? dev : desc;
++    len = (i < 2 ? sizeof(dev) : size)-1;
++    // ENOMEM gives as much of a long description as fits.
++    if (sysctlbyname(oid, buf, &len, 0, 0) && errno != ENOMEM) break;
++    buf[len] = 0;
++  }
++}
++#endif
+diff --git a/lib/portability.h b/lib/portability.h
+index 535e081..4d3c63b 100644
+--- a/lib/portability.h
++++ b/lib/portability.h
+@@ -397,3 +397,7 @@ int timer_settime_wrap(timer_t t, int flags, struct itimerspec *val,
+   struct itimerspec *old);
+ #define timer_settime(...) timer_settime_wrap(__VA_ARGS__)
+ #endif
++
++#ifdef __FreeBSD__
++void controller_desc(char *name, char *desc, int size);
++#endif
+diff --git a/toys/other/gpiod.c b/toys/other/gpiod.c
+index 3abdbc0..e1439ab 100644
+--- a/toys/other/gpiod.c
++++ b/toys/other/gpiod.c
+@@ -65,11 +65,17 @@ GLOBALS(
+   int chip_count;
+ )
+ 
++#ifdef __FreeBSD__
++#include <sys/gpio.h>
++#define CHIP "gpioc"
++#else
+ #include <linux/gpio.h>
++#define CHIP "gpiochip"
++#endif
+ 
+ static int open_chip(char *chip)
+ {
+-  sprintf(toybuf, isdigit(*chip) ? "/dev/gpiochip%s" : "/dev/%s", chip);
++  sprintf(toybuf, isdigit(*chip) ? "/dev/" CHIP "%s" : "/dev/%s", chip);
+   return xopen(toybuf, O_RDWR);
+ }
+ 
+@@ -79,7 +85,7 @@ static int collect_chips(struct dirtree *node)
+ 
+   if (!node->parent) return DIRTREE_RECURSE; // Skip the directory itself.
+ 
+-  if (sscanf(node->name, "gpiochip%d", &n)!=1) return 0;
++  if (sscanf(node->name, CHIP "%d", &n)!=1) return 0;
+ 
+   dlist_add(&TT.chips, xstrdup(node->name));
+   TT.chip_count++;
+@@ -117,6 +123,23 @@ static void foreach_chip(void (*cb)(char *name))
+   llist_traverse(TT.chips, llist_free_double);
+ }
+ 
++
++#ifdef __FreeBSD__
++// FreeBSD's gpioc(4) device has the pins of one controller. It tells no label
++// of the chip and no user of a pin, and it has no line handle: get and set
++// change the direction of each pin, and -l inverts the value here.
++static void gpiodetect(char *path)
++{
++  char label[64];
++  int fd = xopen(path, O_RDWR), max;
++
++  xioctl(fd, GPIOMAXPIN, &max);
++  close(fd);
++  // The label is the description of the controller.
++  controller_desc(path+5, label, sizeof(label));
++  printf("%s [%s] (%d line%s)\n", path+5, label, max+1, max ? "s" : "");
++}
++#else
+ static void gpiodetect(char *path)
+ {
+   struct gpiochip_info chip;
+@@ -129,6 +152,7 @@ static void gpiodetect(char *path)
+   printf("%s [%s] (%u line%s)\n", chip.name, chip.label, chip.lines,
+          chip.lines==1?"":"s");
+ }
++#endif
+ 
+ void gpiodetect_main(void)
+ {
+@@ -138,6 +162,24 @@ void gpiodetect_main(void)
+ #define FOR_gpiofind
+ #include "generated/flags.h"
+ 
++#ifdef __FreeBSD__
++static void gpiofind(char *path)
++{
++  struct gpio_pin pin;
++  int fd = xopen(path, O_RDWR), i, max;
++
++  xioctl(fd, GPIOMAXPIN, &max);
++  for (i = 0; i <= max; i++) {
++    pin.gp_pin = i;
++    xioctl(fd, GPIOGETCONFIG, &pin);
++    if (!strcmp(pin.gp_name, *toys.optargs)) {
++      printf("%s %d\n", path+5, i);
++      break;
++    }
++  }
++  close(fd);
++}
++#else
+ static void gpiofind(char *path)
+ {
+   struct gpiochip_info chip;
+@@ -155,6 +197,7 @@ static void gpiofind(char *path)
+   }
+   close(fd);
+ }
++#endif
+ 
+ void gpiofind_main(void)
+ {
+@@ -164,6 +207,31 @@ void gpiofind_main(void)
+ #define FOR_gpioinfo
+ #include "generated/flags.h"
+ 
++#ifdef __FreeBSD__
++static void gpioinfo_fd(int fd)
++{
++  struct gpio_pin pin;
++  char name[64];
++  struct fiodgname_arg fgn = { sizeof(name), name };
++  int i, max;
++
++  xioctl(fd, FIODGNAME, &fgn);
++  xioctl(fd, GPIOMAXPIN, &max);
++  printf("%s - %d line%s:\n", name, max+1, max ? "s" : "");
++  for (i = 0; i <= max; i++) {
++    pin.gp_pin = i;
++    xioctl(fd, GPIOGETCONFIG, &pin);
++    if (*pin.gp_name) sprintf(toybuf, "\"%s\"", pin.gp_name);
++    else strcpy(toybuf, "unnamed");
++    printf("\tline %3d:%18s %18s", i, toybuf, "unknown");
++    printf(" %sput", pin.gp_flags&GPIO_PIN_OUTPUT?"out":" in");
++    printf(" active-%s\n",
++      pin.gp_flags&(GPIO_PIN_INVIN|GPIO_PIN_INVOUT)?"low ":"high");
++  }
++
++  close(fd);
++}
++#else
+ static void gpioinfo_fd(int fd)
+ {
+   struct gpiochip_info chip;
+@@ -192,6 +260,7 @@ static void gpioinfo_fd(int fd)
+ 
+   close(fd);
+ }
++#endif
+ 
+ static void gpioinfo(char *path)
+ {
+@@ -209,6 +278,26 @@ void gpioinfo_main(void)
+ #define FOR_gpioget
+ #include "generated/flags.h"
+ 
++#ifdef __FreeBSD__
++void gpioget_main(void)
++{
++  struct gpio_pin pin;
++  struct gpio_req req;
++  char **args = toys.optargs;
++  int fd = open_chip(*args), max;
++
++  xioctl(fd, GPIOMAXPIN, &max);
++  for (args++; *args; args++) {
++    pin.gp_pin = req.gp_pin = atolx_range(*args, 0, max);
++    xioctl(fd, GPIOGETCONFIG, &pin);
++    pin.gp_flags = (pin.gp_flags&~GPIO_PIN_OUTPUT)|GPIO_PIN_INPUT;
++    xioctl(fd, GPIOSETCONFIG, &pin);
++    xioctl(fd, GPIOGET, &req);
++    printf("%s%d", " "+(args == toys.optargs+1), req.gp_value^!!FLAG(l));
++  }
++  xputc('\n');
++}
++#else
+ // TODO: half the get/set plumbing same here, maybe collate?
+ void gpioget_main(void)
+ {
+@@ -232,10 +321,33 @@ void gpioget_main(void)
+     printf("%s%d", " "+(line<1), data.values[line]);
+   xputc('\n');
+ }
++#endif
+ 
+ #define FOR_gpioset
+ #include "generated/flags.h"
+ 
++#ifdef __FreeBSD__
++void gpioset_main(void)
++{
++  struct gpio_pin pin;
++  struct gpio_req req;
++  char **args;
++  int fd = open_chip(*toys.optargs), line, value;
++
++  for (args = toys.optargs+1; *args; args++)
++    if (sscanf(*args, "%d=%d", &line, &value) != 2)
++      perror_exit("not LINE=VALUE: %s", *args);
++  for (args = toys.optargs+1; *args; args++) {
++    sscanf(*args, "%d=%d", &line, &value);
++    pin.gp_pin = req.gp_pin = line;
++    xioctl(fd, GPIOGETCONFIG, &pin);
++    pin.gp_flags = (pin.gp_flags&~GPIO_PIN_INPUT)|GPIO_PIN_OUTPUT;
++    xioctl(fd, GPIOSETCONFIG, &pin);
++    req.gp_value = !!value^!!FLAG(l);
++    xioctl(fd, GPIOSET, &req);
++  }
++}
++#else
+ void gpioset_main(void)
+ {
+   struct gpiohandle_request req = { .flags = GPIOHANDLE_REQUEST_OUTPUT };
+@@ -252,3 +364,4 @@ void gpioset_main(void)
+   }
+   xioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, &req);
+ }
++#endif
+-- 
+2.50.1 (Apple Git-155)
+

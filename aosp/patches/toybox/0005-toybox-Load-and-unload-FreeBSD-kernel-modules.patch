@@ -1,0 +1,152 @@
+From 669fa7c58a18c21fec154d1fe4a652c9bb6217a5 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 07:56:31 +0530
+Subject: [PATCH] toybox: Load and unload FreeBSD kernel modules
+
+insmod, rmmod and modprobe call the Linux system calls init_module,
+finit_module and delete_module.  On FreeBSD the kernel linker does this
+work: kldload(2) loads a module and the modules that it depends on,
+kldfind(2) gives the file id of a loaded module, and kldunloadf(2)
+unloads it, with LINKER_UNLOAD_FORCE for rmmod -f.  An unload never
+waits, which is also the Linux behavior since 3.13.
+
+kldload(2) looks up a name without "/" in kern.module_path, so insmod
+gives a file in the current directory its path.  modprobe loads a
+module by name and needs no modules.dep: the kernel linker finds the
+module and its dependencies.  A module that is already loaded is not an
+error, as on Linux.  modprobe -l and -D still read modules.dep.
+
+FreeBSD modules take no load options: they read their tunables from
+kenv(2), so a module option fails.  modprobe -r with no module fails
+with EINVAL, because the kernel linker has no autoclean.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/insmod.c     | 15 +++++++++++++++
+ toys/other/rmmod.c      |  8 ++++++++
+ toys/pending/modprobe.c | 33 +++++++++++++++++++++++++++++++++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/toys/other/insmod.c b/toys/other/insmod.c
+index 176e5a6..f18dd94 100644
+--- a/toys/other/insmod.c
++++ b/toys/other/insmod.c
+@@ -15,6 +15,20 @@ config INSMOD
+ 
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++#include <sys/linker.h>
++
++void insmod_main(void)
++{
++  char *path = *toys.optargs;
++
++  // FreeBSD modules take no options: they read their tunables from kenv(2).
++  if (toys.optc > 1) error_exit("no module options");
++  // kldload(2) looks up a name without "/" in kern.module_path.
++  if (!strchr(path, '/')) path = xmprintf("./%s", path);
++  if (kldload(path) == -1) perror_exit("failed to load %s", *toys.optargs);
++}
++#else
+ void insmod_main(void)
+ {
+   int fd = xopenro(*toys.optargs);
+@@ -44,3 +58,4 @@ void insmod_main(void)
+ 
+   if (CFG_TOYBOX_FREE) close(fd);
+ }
++#endif
+diff --git a/toys/other/rmmod.c b/toys/other/rmmod.c
+index 0450c0b..4289695 100644
+--- a/toys/other/rmmod.c
++++ b/toys/other/rmmod.c
+@@ -19,7 +19,15 @@ config RMMOD
+ #define FOR_rmmod
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++#include <sys/linker.h>
++
++// FreeBSD unloads by file id.  An unload never waits, as on Linux since 3.13.
++#define delete_module(mod, flags) kldunloadf(kldfind(mod), \
++  ((flags)&O_TRUNC) ? LINKER_UNLOAD_FORCE : LINKER_UNLOAD_NORMAL)
++#else
+ #define delete_module(mod, flags) syscall(__NR_delete_module, mod, flags)
++#endif
+ 
+ void rmmod_main(void)
+ {
+diff --git a/toys/pending/modprobe.c b/toys/pending/modprobe.c
+index 4db3dde..99ba43f 100644
+--- a/toys/pending/modprobe.c
++++ b/toys/pending/modprobe.c
+@@ -28,6 +28,10 @@ config MODPROBE
+ #define FOR_modprobe
+ #include "toys.h"
+ 
++#ifdef __FreeBSD__
++#include <sys/linker.h>
++#endif
++
+ GLOBALS(
+   struct arg_list *dirs;
+ 
+@@ -343,17 +347,29 @@ static int rm_mod(char *modules)
+   char *s;
+ 
+   if (modules && (s = strend(modules, ".ko"))) *s = 0;
++#ifdef __FreeBSD__
++  // The FreeBSD kernel linker has no autoclean, so it needs a module name.
++  if (!modules) return errno = EINVAL, -1;
++  return kldunloadf(kldfind(modules), LINKER_UNLOAD_NORMAL);
++#else
+   return syscall(__NR_delete_module, modules, O_NONBLOCK);
++#endif
+ }
+ 
+ // Insert module; simpler than insmod(1) because we already flattened the array
+ // of flags, and don't need to support loading from stdin.
+ static int ins_mod(char *modules, char *flags)
+ {
++#ifdef __FreeBSD__
++  // FreeBSD modules take no options: they read their tunables from kenv(2).
++  if (flags && *flags) return errno = EINVAL, -1;
++  return kldload(modules) == -1 ? -1 : 0;
++#else
+   int fd = xopenro(modules), rc = syscall(__NR_finit_module, fd, flags, 0);
+ 
+   xclose(fd);
+   return rc;
++#endif
+ }
+ 
+ // Add module in probes list, if not loaded.
+@@ -471,6 +487,23 @@ void modprobe_main(void)
+     return;
+   }
+ 
++#ifdef __FreeBSD__
++  // The FreeBSD kernel linker finds a module by name in kern.module_path and
++  // loads its dependencies, so only -l and -D read modules.dep.
++  if (!FLAG(l) && !FLAG(D)) {
++    for (; *argv; argv++) {
++      // A module that is already loaded is not an error.
++      if ((FLAG(r) ? rm_mod(*argv) : ins_mod(*argv, add_cmdopt(argv)))
++          && (FLAG(r) || errno != EEXIST)) {
++        if (!FLAG(q)) perror_msg("%s", *argv);
++        toys.exitval = 1;
++      }
++      if (!FLAG(a) && !FLAG(r)) break;
++    }
++    return;
++  }
++#endif
++
+   if (!TT.dirs) {
+     struct utsname uts;
+ 
+-- 
+2.50.1 (Apple Git-155)
+

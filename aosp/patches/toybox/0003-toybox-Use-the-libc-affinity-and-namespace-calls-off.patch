@@ -1,0 +1,81 @@
+From 234ad5561ed80b3c79dcedd202d8093b9d7f71de Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 07:51:31 +0530
+Subject: [PATCH] toybox: Use the libc affinity and namespace calls off Linux
+
+taskset and nproc call sched_setaffinity and sched_getaffinity, and
+nsenter and unshare call setns and unshare, by Linux system call
+number.  bionic on FreeBSD has these functions in libc on native
+calls: the affinity functions on cpuset(2), and unshare() and setns()
+fail as on a kernel without namespaces.  Keep the raw calls for Linux
+and use the libc functions elsewhere.  nproc passes toybuf as a void
+pointer, as the macro does.  bionic declares these functions with
+_GNU_SOURCE, as glibc does, so the two files define it off Linux.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/nsenter.c | 6 ++++++
+ toys/other/taskset.c | 8 +++++++-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/toys/other/nsenter.c b/toys/other/nsenter.c
+index bafed47..4e37f84 100644
+--- a/toys/other/nsenter.c
++++ b/toys/other/nsenter.c
+@@ -69,12 +69,18 @@ config NSENTER
+     to a namespace file, ala "-i=/proc/$PID/ns/ipc"
+ */
+ 
++#ifndef __linux__
++// bionic declares the functions that take the place of the system calls.
++#define _GNU_SOURCE
++#endif
+ #define FOR_nsenter
+ #include "toys.h"
+ #include <linux/sched.h>
+ 
++#ifdef __linux__
+ #define unshare(flags) syscall(SYS_unshare, flags)
+ #define setns(fd, nstype) syscall(SYS_setns, fd, nstype)
++#endif
+ 
+ GLOBALS(
+   char *UupnmiC[7];
+diff --git a/toys/other/taskset.c b/toys/other/taskset.c
+index 94044eb..bd06802 100644
+--- a/toys/other/taskset.c
++++ b/toys/other/taskset.c
+@@ -32,14 +32,20 @@ config TASKSET
+     -a	Set/get affinity of all threads of the PID
+ */
+ 
++#ifndef __linux__
++// bionic declares the functions that take the place of the system calls.
++#define _GNU_SOURCE
++#endif
+ #define FOR_taskset
+ #include "toys.h"
+ 
++#ifdef __linux__
+ // mask is array of long which makes layout a bit weird on big endian systems
+ #define sched_setaffinity(pid, size, cpuset) \
+   syscall(__NR_sched_setaffinity, (pid_t)pid, (size_t)size, (void *)cpuset)
+ #define sched_getaffinity(pid, size, cpuset) \
+   syscall(__NR_sched_getaffinity, (pid_t)pid, (size_t)size, (void *)cpuset)
++#endif
+ 
+ static void do_taskset(pid_t pid)
+ {
+@@ -125,7 +131,7 @@ void nproc_main(void)
+   DIR *dd;
+ 
+   // This can only detect 32768 processors. Call getaffinity and count bits.
+-  if (!toys.optflags && -1!=sched_getaffinity(getpid(), 4096, toybuf))
++  if (!toys.optflags && -1!=sched_getaffinity(getpid(), 4096, (void *)toybuf))
+     for (i = 0; i<4096; i++)
+       if (toybuf[i]) for (j=0; j<8; j++) if (toybuf[i]&(1<<j)) nproc++;
+ 
+-- 
+2.50.1 (Apple Git-155)
+

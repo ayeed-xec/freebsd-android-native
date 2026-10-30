@@ -1,0 +1,42 @@
+From 289687ade421d71633fb0705ebe1b82e8d95e2b3 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 20:35:18 +0530
+Subject: [PATCH] toybox: Flush a FreeBSD disk for a writer in blockdev
+
+blockdev opens the disk read-only.  DIOCGFLUSH makes a BIO_FLUSH, and
+GEOM refuses it with EPERM for a consumer without write access, so
+blockdev --flushbufs always failed on FreeBSD.  Open the disk for
+writing for --flushbufs, as --rereadpt already does.  As with each
+writer, GEOM reads the partition table again at the last close.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/blockdev.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/toys/other/blockdev.c b/toys/other/blockdev.c
+index 6ea9bbc..e4b3036 100644
+--- a/toys/other/blockdev.c
++++ b/toys/other/blockdev.c
+@@ -71,10 +71,13 @@ void blockdev_main(void)
+       else val = FLAG(setro);
+ 
+ #ifdef __FreeBSD__
+-      // GEOM reads the partition table again when the last writer closes
+-      // the disk.
+-      if (flag == FLAG_rereadpt) {
+-        xclose(xopen(*ss, O_WRONLY));
++      // GEOM flushes a disk only for a writer, and reads the partition table
++      // again when the last writer closes the disk.
++      if (flag == FLAG_flushbufs || flag == FLAG_rereadpt) {
++        int wfd = xopen(*ss, O_WRONLY);
++
++        if (flag == FLAG_flushbufs) xioctl(wfd, DIOCGFLUSH, &val);
++        xclose(wfd);
+         continue;
+       }
+ #endif
+-- 
+2.50.1 (Apple Git-155)
+

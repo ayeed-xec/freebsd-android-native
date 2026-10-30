@@ -93,7 +93,8 @@ set(BIONIC_TEST_SRCS gtest_globals.cpp gtest_main.cpp utils.cpp
     setjmp_test.cpp signal_test.cpp stdio_test.cpp string_test.cpp
     stack_protector_test.cpp sys_epoll_test.cpp sys_mman_test.cpp
     sys_select_test.cpp sys_sysinfo_test.cpp sys_xattr_test.cpp
-    stdio_ext_test.cpp sys_statvfs_test.cpp
+    stdio_ext_test.cpp sys_statvfs_test.cpp sys_sysmacros_test.cpp
+    iconv_test.cpp utmp_test.cpp
     system_properties_test.cpp eventfd_test.cpp
     sys_socket_cred_test.cpp
     system_properties_test2.cpp time_test.cpp unistd_test.cpp)
@@ -103,20 +104,6 @@ list(TRANSFORM BIONIC_TEST_SRCS PREPEND "${BIONIC_TESTS}/")
 set(BIONIC_LOADER_TEST_SRCS dlext_test.cpp dlfcn_symlink_support.cpp
     dlfcn_test.cpp elftls_dl_test.cpp link_test.cpp)
 list(TRANSFORM BIONIC_LOADER_TEST_SRCS PREPEND "${BIONIC_TESTS}/")
-
-# The exec tests run echo, printenv and sh from BIN_DIR, and look for echo
-# and printenv in PATH; the popen tests run cat.  On Android these are
-# toybox and mksh in /system/bin.  There is no toybox yet, so copies of the
-# FreeBSD programs stand in for it.  They are copies, not links: in the jail
-# /bin is /system/bin.
-set(TEST_BIN "${CMAKE_CURRENT_BINARY_DIR}/test-bin")
-file(MAKE_DIRECTORY "${TEST_BIN}")
-foreach(prog /bin/cat /bin/echo /bin/sh /usr/bin/printenv)
-	get_filename_component(name "${prog}" NAME)
-	# An older tree has a link here, and a copy would go to its target.
-	file(REMOVE "${TEST_BIN}/${name}")
-	file(COPY "${prog}" DESTINATION "${TEST_BIN}")
-endforeach()
 
 # Both suites link the same objects.  The loader tests are in the dynamic
 # suite only.
@@ -136,8 +123,6 @@ foreach(objs bionic_test_objs bionic_loader_test_objs)
 	    "${GTEST_ISOLATED}/include" "${LIBBASE}/include"
 	    "${LIBLOG}/include" "${AOSP_SYSTEM}/core/libcutils/include"
 	    "${TINYXML2}")
-	target_compile_definitions(${objs} PRIVATE
-	    "BIN_DIR=\"${TEST_BIN}/\"")
 	# -Wextra goes first so AOSP's -Wno-* flags still win.  clang 22
 	# warns about function type casts where AOSP's clang does not.
 	# mode_t is 16 bits on FreeBSD, so st_mode & 0777 promotes to int
@@ -614,6 +599,10 @@ if(BUILTINS_LIB)
 	target_link_libraries(bionic-unit-tests PRIVATE "${BUILTINS_LIB}")
 endif()
 
+# The programs that run in the jail from the build tree go to jail/, the
+# only directory of the build tree that the jail mounts.
+set(JAIL_BIN "${GEN}/jail")
+
 # propd makes the property area of the jail and answers
 # __system_property_set(), as init does on a device.  It is static, so the
 # jail can start it before anything else.
@@ -641,12 +630,13 @@ target_link_options(propd PRIVATE -static -nostdlib -fuse-ld=lld
 target_link_libraries(propd PRIVATE -Wl,--start-group
     propertyinfoserializer base log ${LIBCXX_STATIC} -Wl,--end-group
     c_static "${GEN}/crtend.o")
-set_target_properties(propd PROPERTIES
+set_target_properties(propd PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}"
     LINK_DEPENDS "${GEN}/crtbegin_static.o")
 if(BUILTINS_LIB)
 	target_link_libraries(propd PRIVATE "${BUILTINS_LIB}")
 endif()
-configure_file("${PROPD}/property_contexts" property_contexts COPYONLY)
+configure_file("${PROPD}/property_contexts" "${JAIL_BIN}/property_contexts"
+    COPYONLY)
 
 # propwait_test: a client with the read-only area waits for a property that
 # another process sets through propd.  With -s, six clients wait at
@@ -663,6 +653,7 @@ target_link_options(propwait_test PRIVATE -static -nostdlib -fuse-ld=lld
 target_link_libraries(propwait_test PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
 set_target_properties(propwait_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}"
     LINK_DEPENDS "${GEN}/crtbegin_static.o")
 if(BUILTINS_LIB)
 	target_link_libraries(propwait_test PRIVATE "${BUILTINS_LIB}")
@@ -682,6 +673,7 @@ target_link_options(pthread_stress PRIVATE -static -nostdlib -fuse-ld=lld
 target_link_libraries(pthread_stress PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
 set_target_properties(pthread_stress PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}"
     LINK_DEPENDS "${GEN}/crtbegin_static.o")
 if(BUILTINS_LIB)
 	target_link_libraries(pthread_stress PRIVATE "${BUILTINS_LIB}")
@@ -705,8 +697,8 @@ configure_file(bionic-tests-jail.conf.in bionic-tests-jail.conf @ONLY)
 # after the exclusion list are the command that runs the suite.
 set(RUN_SUITE sh "${CMAKE_CURRENT_SOURCE_DIR}/run-gtest-suite.sh")
 # Each suite goes to the jail with the test libraries and helper programs.
-# TEST_BIN is last in PATH, after the directories of the host or the jail.
-set(RUN_SUITE_PATH "PATH=/sbin:/bin:/usr/sbin:/usr/bin:${TEST_BIN}")
+# In the jail /bin is /system/bin, where toybox and sh are, as on Android.
+set(RUN_SUITE_PATH "PATH=/sbin:/bin:/usr/sbin:/usr/bin")
 add_test(NAME bionic_unit_tests_static COMMAND ${RUN_SUITE}
     -j "${GEN}/bionic-tests-jail.conf" -d "${TESTLIB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/bionic-unit-tests-static.excluded"

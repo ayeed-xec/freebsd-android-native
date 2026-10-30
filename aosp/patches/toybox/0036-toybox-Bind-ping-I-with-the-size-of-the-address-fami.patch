@@ -1,0 +1,38 @@
+From 8c2fd22ab29737ef5c7f3275b17157fc3642000f Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:43:47 +0530
+Subject: [PATCH] toybox: Bind ping -I with the size of the address family on
+ FreeBSD
+
+ping -I binds the socket with the size of union socksaddr, 28 bytes.
+The FreeBSD kernel sets sa_len from that size, and a raw IPv4 socket
+takes only the 16 bytes of struct sockaddr_in, so ping -I failed for
+IPv4 with "bind: Invalid argument".  Give the size of the address of
+the family, ai_addrlen.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ping.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/toys/net/ping.c b/toys/net/ping.c
+index 2833df3..dea3fc4 100644
+--- a/toys/net/ping.c
++++ b/toys/net/ping.c
+@@ -192,7 +192,12 @@ void ping_main(void)
+     }
+     xexit();
+   }
++#ifdef __FreeBSD__
++  // A FreeBSD raw IPv4 socket takes only the size of an IPv4 address.
++  if (TT.I) xbind(TT.sock, sa, ai->ai_addrlen);
++#else
+   if (TT.I) xbind(TT.sock, sa, sizeof(srcaddr));
++#endif
+ 
+ #ifdef __FreeBSD__
+   // The ttl is in the IP header of each reply. The socket cookie tags the
+-- 
+2.50.1 (Apple Git-155)
+

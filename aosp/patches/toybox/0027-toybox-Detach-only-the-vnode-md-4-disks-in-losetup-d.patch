@@ -1,0 +1,42 @@
+From ff3ce2fb1c0df3b50d5964ebcbf1fcccf19b6d53 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:40:12 +0530
+Subject: [PATCH] toybox: Detach only the vnode md(4) disks in losetup -d
+
+MDIOCDETACH removes an md(4) disk of each type, and md(4) does not check
+the type.  losetup -d of a malloc or swap disk removed the disk and its
+data, where Linux losetup -d refuses a device that is not a loop device.
+Query the disk first and detach it only when it is a vnode disk.  Any
+other disk gives ENXIO, and -D leaves it.  MDIOCDETACH refuses a size
+or an option other than MD_FORCE, so clear what the query gave.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/losetup.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/toys/other/losetup.c b/toys/other/losetup.c
+index aba8493..0093780 100644
+--- a/toys/other/losetup.c
++++ b/toys/other/losetup.c
+@@ -90,10 +90,14 @@ static int loopback_setup(char *device, char *file)
+     while (!ioctl(cfd, MDIOCQUERY, &md)) md.md_unit++;
+     if (errno != ENOENT) perror_exit("-f");
+     printf("/dev/md%u\n", md.md_unit);
++  } else if (ioctl(cfd, MDIOCQUERY, &md)
++      || (md.md_type != MD_VNODE && (errno = ENXIO))) {
++    // Only a vnode disk is a loop device: -d leaves a malloc or swap disk.
++    if (!FLAG(a) && !FLAG(j)) perror_msg_raw(device);
+   } else if (FLAG(d)) {
++    // MDIOCDETACH takes no size and no option but MD_FORCE.
++    md.md_mediasize = md.md_options = 0;
+     if (ioctl(cfd, MDIOCDETACH, &md)) perror_msg_raw(device);
+-  } else if (ioctl(cfd, MDIOCQUERY, &md) || md.md_type != MD_VNODE) {
+-    if (!FLAG(a) && !FLAG(j)) perror_msg_raw(device);
+   } else if (stat(name, &st)) perror_msg_raw(name);
+   else if (!TT.j || (st.st_dev == TT.jdev && st.st_ino == TT.jino)) {
+     if (FLAG(c)) {
+-- 
+2.50.1 (Apple Git-155)
+

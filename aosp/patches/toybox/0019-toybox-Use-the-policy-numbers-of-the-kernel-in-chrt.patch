@@ -1,0 +1,58 @@
+From e4b73238974e15215eb0e7bdc59dd0fc6315d5d5 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 09:35:09 +0530
+Subject: [PATCH] toybox: Use the policy numbers of the kernel in chrt
+
+chrt uses the Linux policy numbers as the index of its name table, and
+the -ofrbi flags give the Linux numbers.  FreeBSD has other numbers
+(SCHED_FIFO 1, SCHED_OTHER 2, SCHED_RR 3), so chrt -p showed SCHED_RR
+for a SCHED_OTHER process, and chrt -r set SCHED_OTHER.  On another
+kernel, make the name table from the libc constants, and change each
+flag to the policy of the kernel.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/chrt.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/toys/other/chrt.c b/toys/other/chrt.c
+index e2331c9..79daef2 100644
+--- a/toys/other/chrt.c
++++ b/toys/other/chrt.c
+@@ -47,10 +47,22 @@ GLOBALS(
+   syscall(SYS_sched_setscheduler, (pid_t)pid, (int)scheduler, (void *)param)
+ #endif
+ 
++#ifdef __linux__
+ static char *polnames[] = {
+   "SCHED_OTHER", "SCHED_FIFO", "SCHED_RR", "SCHED_BATCH", 0, "SCHED_IDLE",
+   "SCHED_DEADLINE"
+ };
++#else
++// Other kernels number the policies their own way. The -ibrfo flags keep
++// the Linux order, so flagpols has the policy of each flag position.
++static char *polnames[] = {
++  [SCHED_OTHER] = "SCHED_OTHER", [SCHED_FIFO] = "SCHED_FIFO",
++  [SCHED_RR] = "SCHED_RR", [SCHED_BATCH] = "SCHED_BATCH",
++  [SCHED_IDLE] = "SCHED_IDLE"
++};
++static int flagpols[] = {SCHED_OTHER, SCHED_FIFO, SCHED_RR, SCHED_BATCH, -1,
++  SCHED_IDLE};
++#endif
+ 
+ void chrt_main(void)
+ {
+@@ -85,6 +97,9 @@ void chrt_main(void)
+ 
+   // Set policy and priority
+   if (-1==(pol = highest_bit(toys.optflags&(FLAG_p-1)))) pol = SCHED_RR;
++#ifndef __linux__
++  else pol = flagpols[pol];
++#endif
+   pri = atolx_range(*toys.optargs, sched_get_priority_min(pol),
+     sched_get_priority_max(pol));
+   if (FLAG(R)) pol |= SCHED_RESET_ON_FORK;
+-- 
+2.50.1 (Apple Git-155)
+

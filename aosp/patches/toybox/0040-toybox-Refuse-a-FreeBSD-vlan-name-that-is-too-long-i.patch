@@ -1,0 +1,33 @@
+From ad24ef94bb837184aeeb4edb0fd66c7541f165ca Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:44:52 +0530
+Subject: [PATCH] toybox: Refuse a FreeBSD vlan name that is too long in
+ vconfig
+
+snprintf() cut the name IF.VID at IFNAMSIZ - 1 characters with no
+error, so a long parent name gave an interface with a different VID.
+Refuse a name that does not fit.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/vconfig.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/toys/other/vconfig.c b/toys/other/vconfig.c
+index 339e4e7..bcdb9d0 100644
+--- a/toys/other/vconfig.c
++++ b/toys/other/vconfig.c
+@@ -40,7 +40,8 @@ void vconfig_main(void)
+     if (toys.optargs[2]) vid = atolx_range(toys.optargs[2], 0, 4094);
+     if (vid == 1)
+       xprintf("WARNING: VLAN 1 does not work with many switches.\n");
+-    snprintf(ifr.ifr_name, IFNAMSIZ, "%s.%ld", toys.optargs[1], vid);
++    if (snprintf(ifr.ifr_name, IFNAMSIZ, "%s.%ld", toys.optargs[1], vid)
++        >= IFNAMSIZ) error_exit("%s.%ld: name too long", toys.optargs[1], vid);
+     xioctl(fd, SIOCIFCREATE2, &ifr);
+   } else if (!strcmp(cmd, "rem")) {
+     xstrncpy(ifr.ifr_name, toys.optargs[1], IFNAMSIZ);
+-- 
+2.50.1 (Apple Git-155)
+

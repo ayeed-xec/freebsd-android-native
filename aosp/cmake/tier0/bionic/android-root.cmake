@@ -31,6 +31,7 @@
 #   /apex/com.android.i18n/lib64/libicuuc.so    ICU's libicuuc
 #   /apex/com.android.i18n/lib64/libicui18n.so  ICU's libicui18n
 #   /system/bin/sh                     mksh, the sh module of external/mksh
+#   /system/bin/toybox                 toybox and its links (toybox.cmake)
 #   /system/etc/mkshrc                 its startup file
 #   /system/build.prop                 the build-time properties
 #   /system/lib64/liblog.so            liblog

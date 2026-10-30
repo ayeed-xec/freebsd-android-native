@@ -1,0 +1,41 @@
+From d085354d3fa524370933c1b8efa4debd02fc0c5e Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:43:21 +0530
+Subject: [PATCH] toybox: Get the size of a FreeBSD disk with DIOCGMEDIASIZE
+
+get_block_device_size() had no FreeBSD branch, so fdlength() searched
+for the size with reads of 1 byte.  A FreeBSD disk takes only whole
+sectors and refuses such a read, so fdlength() gave no size for a disk.
+mkswap, truncate, modinfo and vi use fdlength().  Use DIOCGMEDIASIZE of
+disk(4), which gives the size of the media in bytes.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ lib/portability.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/lib/portability.c b/lib/portability.c
+index 3b8f4e6..ae06642 100644
+--- a/lib/portability.c
++++ b/lib/portability.c
+@@ -602,6 +602,16 @@ int get_block_device_size(int fd, unsigned long long* size)
+ {
+   return (ioctl(fd, BLKGETSIZE64, size) >= 0);
+ }
++#elif defined(__FreeBSD__)
++#include <sys/disk.h>
++int get_block_device_size(int fd, unsigned long long* size)
++{
++  off_t mediasize;
++  int status = (ioctl(fd, DIOCGMEDIASIZE, &mediasize) >= 0);
++
++  *size = mediasize;
++  return status;
++}
+ #elif defined(__OpenBSD__)
+ #include <sys/dkio.h>
+ #include <sys/disklabel.h>
+-- 
+2.50.1 (Apple Git-155)
+

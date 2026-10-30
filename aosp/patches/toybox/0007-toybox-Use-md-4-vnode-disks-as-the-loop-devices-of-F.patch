@@ -1,0 +1,146 @@
+From 8cc59f3c4ac2b3ad4ead65bb6ac78833e5845e8e Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:08:15 +0530
+Subject: [PATCH] toybox: Use md(4) vnode disks as the loop devices of FreeBSD
+
+FreeBSD has no Linux loop device.  Its file-backed disk is the vnode
+disk of md(4), /dev/mdN, which the ioctls of /dev/mdctl attach
+(MDIOCATTACH), query (MDIOCQUERY), resize (MDIOCRESIZE) and detach
+(MDIOCDETACH).  losetup takes /dev/mdN or mdN as the device:
+
+- DEVICE FILE attaches FILE to the unit, -f FILE to the next free unit
+  (MD_AUTOUNIT), -r read-only (MD_READONLY), -S as the media size.
+- -f alone prints the first unit that is not attached.
+- -d detaches, -c gives the disk the size of its file again.
+- DEVICE, -a and -j show the file, its device and inode, and a size
+  limit; -a and -j read the md[0-9]* nodes of /dev.
+
+md(4) has no offset into the file, so -o fails.  mount -o loop runs
+losetup -fs, so it gets a vnode disk too.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/other/losetup.c | 75 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 75 insertions(+)
+
+diff --git a/toys/other/losetup.c b/toys/other/losetup.c
+index 4084109..aba8493 100644
+--- a/toys/other/losetup.c
++++ b/toys/other/losetup.c
+@@ -34,7 +34,11 @@ config LOSETUP
+ 
+ #define FOR_losetup
+ #include "toys.h"
++#ifdef __FreeBSD__
++#include <sys/mdioctl.h>
++#else
+ #include <linux/loop.h>
++#endif
+ 
+ GLOBALS(
+   char *j;
+@@ -48,6 +52,66 @@ GLOBALS(
+ 
+ // -f: *device is NULL
+ 
++#ifdef __FreeBSD__
++// The loop devices of FreeBSD are the vnode disks of md(4), /dev/mdN, which
++// the ioctls of /dev/mdctl attach, query, resize and detach. md(4) has no
++// offset into the file.
++static int loopback_setup(char *device, char *file)
++{
++  struct md_ioctl md;
++  struct stat st;
++  char *name = toybuf+sizeof(toybuf)/2, *s = device;
++  int cfd = xopen("/dev/mdctl", O_RDWR);
++
++  memset(&md, 0, sizeof(md));
++  md.md_version = MDIOVERSION;
++  md.md_file = name;
++  if (s) {
++    strstart(&s, "/dev/");
++    if (!strstart(&s, "md") || !*s || s[strspn(s, "0123456789")])
++      error_exit("not md: %s", device);
++    md.md_unit = atoi(s);
++  }
++
++  if (file) {
++    if (TT.o) error_exit("no offset in md(4)");
++    xstat(file, &st);
++    if (!(s = xabspath(file, ABS_PATH))) perror_exit("%s", file);
++    xstrncpy(name, s, sizeof(toybuf)/2);
++    free(s);
++    md.md_type = MD_VNODE;
++    md.md_options = (FLAG(r) ? MD_READONLY : 0) | (device ? 0 : MD_AUTOUNIT);
++    md.md_mediasize = TT.S ? TT.S : st.st_size;
++    if (ioctl(cfd, MDIOCATTACH, &md))
++      perror_exit("%s=%s", device ? device : "-f", file);
++    if (FLAG(s)) printf("/dev/md%u\n", md.md_unit);
++  } else if (!device) {
++    // -f with no file: the first unit that is not attached.
++    while (!ioctl(cfd, MDIOCQUERY, &md)) md.md_unit++;
++    if (errno != ENOENT) perror_exit("-f");
++    printf("/dev/md%u\n", md.md_unit);
++  } else if (FLAG(d)) {
++    if (ioctl(cfd, MDIOCDETACH, &md)) perror_msg_raw(device);
++  } else if (ioctl(cfd, MDIOCQUERY, &md) || md.md_type != MD_VNODE) {
++    if (!FLAG(a) && !FLAG(j)) perror_msg_raw(device);
++  } else if (stat(name, &st)) perror_msg_raw(name);
++  else if (!TT.j || (st.st_dev == TT.jdev && st.st_ino == TT.jino)) {
++    if (FLAG(c)) {
++      md.md_mediasize = st.st_size;
++      if (ioctl(cfd, MDIOCRESIZE, &md)) perror_msg_raw(device);
++    } else {
++      xprintf("%s: [%lld]:%llu (%s)", device, (long long)st.st_dev,
++        (unsigned long long)st.st_ino, name);
++      if (md.md_mediasize != st.st_size) xprintf(", sizelimit %llu",
++        (unsigned long long)md.md_mediasize);
++      xputc('\n');
++    }
++  }
++  close(cfd);
++
++  return 0;
++}
++#else
+ // Perform requested operation on one device. Returns 1 if handled, 0 if error
+ static int loopback_setup(char *device, char *file)
+ {
+@@ -143,6 +207,7 @@ done:
+   xclose(lfd);
+   return 0;
+ }
++#endif
+ 
+ // Perform an action on all currently existing loop devices
+ static int dash_a(struct dirtree *node)
+@@ -151,7 +216,13 @@ static int dash_a(struct dirtree *node)
+ 
+   // Initial /dev node needs to recurse down one level, then only loop[0-9]*
+   if (!node->parent) return DIRTREE_RECURSE;
++#ifdef __FreeBSD__
++  // md[0-9]*, not the partitions of an md disk.
++  if (strncmp(s, "md", 2) || !s[2] || s[2+strspn(s+2, "0123456789")])
++    return 0;
++#else
+   if (strncmp(s, "loop", 4) || !isdigit(s[4])) return 0;
++#endif
+ 
+   s = dirtree_path(node, 0);
+   loopback_setup(s, 0);
+@@ -164,7 +235,11 @@ void losetup_main(void)
+ {
+   char **s;
+ 
++#ifdef __FreeBSD__
++  TT.dir = "/dev";
++#else
+   TT.dir = CFG_IS_ANDROID ? "/dev/block" : "/dev";
++#endif
+   TT.openflags = FLAG(r) ? O_RDONLY : O_RDWR;
+ 
+   if (TT.j) {
+-- 
+2.50.1 (Apple Git-155)
+

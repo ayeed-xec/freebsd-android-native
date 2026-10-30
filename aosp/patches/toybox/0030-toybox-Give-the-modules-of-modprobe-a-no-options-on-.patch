@@ -1,0 +1,36 @@
+From 4c0459e0e1adc3c340fbfa0b4b63e5e32b0a158c Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:40:55 +0530
+Subject: [PATCH] toybox: Give the modules of modprobe -a no options on FreeBSD
+
+The FreeBSD loop of modprobe gave each module the arguments after it as
+options, and ins_mod() refuses options with EINVAL.  modprobe -a foo bar
+failed with "foo: Invalid argument".  With -a each argument is a module,
+as in the modules.dep code below, so give the modules no options.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/modprobe.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/toys/pending/modprobe.c b/toys/pending/modprobe.c
+index 99ba43f..f00eedc 100644
+--- a/toys/pending/modprobe.c
++++ b/toys/pending/modprobe.c
+@@ -492,8 +492,10 @@ void modprobe_main(void)
+   // loads its dependencies, so only -l and -D read modules.dep.
+   if (!FLAG(l) && !FLAG(D)) {
+     for (; *argv; argv++) {
+-      // A module that is already loaded is not an error.
+-      if ((FLAG(r) ? rm_mod(*argv) : ins_mod(*argv, add_cmdopt(argv)))
++      // A module that is already loaded is not an error. With -a each
++      // argument is a module, not an option.
++      if ((FLAG(r) ? rm_mod(*argv)
++          : ins_mod(*argv, FLAG(a) ? 0 : add_cmdopt(argv)))
+           && (FLAG(r) || errno != EEXIST)) {
+         if (!FLAG(q)) perror_msg("%s", *argv);
+         toys.exitval = 1;
+-- 
+2.50.1 (Apple Git-155)
+

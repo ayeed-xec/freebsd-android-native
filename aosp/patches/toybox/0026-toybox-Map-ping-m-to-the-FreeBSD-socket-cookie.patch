@@ -1,0 +1,39 @@
+From e1f99c98fd214bec561c5db6cc2fd17d0aa98078 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 20:35:19 +0530
+Subject: [PATCH] toybox: Map ping -m to the FreeBSD socket cookie
+
+Linux SO_MARK tags the packets of a socket for the firewall and the
+routing rules.  FreeBSD has SO_USER_COOKIE, a 32-bit value of a socket
+that ipfw(8) and dummynet match (getsockopt(2)).  Set the cookie for -m
+in place of the EOPNOTSUPP failure.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/ping.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/toys/net/ping.c b/toys/net/ping.c
+index f209cc2..2833df3 100644
+--- a/toys/net/ping.c
++++ b/toys/net/ping.c
+@@ -195,11 +195,11 @@ void ping_main(void)
+   if (TT.I) xbind(TT.sock, sa, sizeof(srcaddr));
+ 
+ #ifdef __FreeBSD__
+-  // The ttl is in the IP header of each reply. FreeBSD has no mark of the
+-  // packets of a socket.
++  // The ttl is in the IP header of each reply. The socket cookie tags the
++  // packets for ipfw(8), as the mark tags them for the Linux firewall.
+   if (FLAG(m)) {
+-    errno = EOPNOTSUPP;
+-    perror_exit("-m");
++    len = TT.m;
++    xsetsockopt(TT.sock, SOL_SOCKET, SO_USER_COOKIE, &len, sizeof(len));
+   }
+ #else
+   len = 1;
+-- 
+2.50.1 (Apple Git-155)
+

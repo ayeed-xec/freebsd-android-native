@@ -1,0 +1,35 @@
+From 6f223f05ff6ec6b6708f21c96cf745fe81cd3a01 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:44:52 +0530
+Subject: [PATCH] toybox: Destroy the new FreeBSD interface when tunctl cannot
+ name it
+
+When SIOCSIFNAME failed, for example because the name was in use,
+tunctl exited and left the new tun or tap interface with the name of
+the clone.  Destroy it before the error, as brctl addbr does.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/tunctl.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/toys/net/tunctl.c b/toys/net/tunctl.c
+index bebadbe..e76bc18 100644
+--- a/toys/net/tunctl.c
++++ b/toys/net/tunctl.c
+@@ -57,7 +57,10 @@ void tunctl_main(void)
+     xioctl(fd, SIOCIFCREATE2, &ifr);
+     if (strcmp(ifr.ifr_name, name)) {
+       ifr.ifr_data = name;
+-      xioctl(fd, SIOCSIFNAME, &ifr);
++      if (ioctl(fd, SIOCSIFNAME, &ifr)) {
++        ioctl(fd, SIOCIFDESTROY, &ifr);
++        perror_exit("%s", name);
++      }
+     }
+     if (TT.u && chown(path = xmprintf("/dev/%s", name), xgetuid(TT.u), -1))
+       perror_exit("%s", path);
+-- 
+2.50.1 (Apple Git-155)
+

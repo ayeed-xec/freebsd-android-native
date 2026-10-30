@@ -1,0 +1,63 @@
+From a602e4291558e0f0be52731ca22ac9b8a0719c94 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Thu, 29 Oct 2026 23:40:44 +0530
+Subject: [PATCH] toybox: Disable the unused characters of stty sane with
+ _POSIX_VDISABLE
+
+make_sane() set each unused special character, eol and eol2 to 0.  That
+disables a character only where _POSIX_VDISABLE is 0, as on Linux.  On
+FreeBSD _POSIX_VDISABLE is 0xff, so stty sane made NUL the end of line
+character and stty -a showed "eol = ^@; eol2 = ^@".  Use
+_POSIX_VDISABLE, which is the same value as before on Linux.  On FreeBSD
+also give erase2, dsusp and status the defaults of <sys/ttydefaults.h>
+(^H, ^Y and ^T).
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/pending/stty.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/toys/pending/stty.c b/toys/pending/stty.c
+index 3e455a2..7fff7ac 100644
+--- a/toys/pending/stty.c
++++ b/toys/pending/stty.c
+@@ -355,7 +355,7 @@ static void make_sane(struct termios *t)
+     "tab0", "bs0", "vt0", "ff0", "isig", "-tostop", "-ofdel", "-echoprt",
+     "echoctl", "echoke", "-extproc", "-flusho", "cs8", NULL);
+ #endif
+-  memset(t->c_cc, 0, NCCS);
++  memset(t->c_cc, _POSIX_VDISABLE, NCCS);
+   t->c_cc[VINTR] = 0x3;
+   t->c_cc[VQUIT] = 0x1c;
+   t->c_cc[VERASE] = 0x7f;
+@@ -363,18 +363,23 @@ static void make_sane(struct termios *t)
+   t->c_cc[VEOF] = 0x4;
+   t->c_cc[VTIME] = 0;
+   t->c_cc[VMIN] = 1;
+-#ifndef __FreeBSD__
++#ifdef __FreeBSD__
++  // The defaults of <sys/ttydefaults.h> for the characters of FreeBSD.
++  t->c_cc[VERASE2] = 0x8;
++  t->c_cc[VDSUSP] = 0x19;
++  t->c_cc[VSTATUS] = 0x14;
++#else
+   t->c_cc[VSWTC] = 0;
+ #endif
+   t->c_cc[VSTART] = 0x11;
+   t->c_cc[VSTOP] = 0x13;
+   t->c_cc[VSUSP] = 0x1a;
+-  t->c_cc[VEOL] = 0;
++  t->c_cc[VEOL] = _POSIX_VDISABLE;
+   t->c_cc[VREPRINT] = 0x12;
+   t->c_cc[VDISCARD] = 0xf;
+   t->c_cc[VWERASE] = 0x17;
+   t->c_cc[VLNEXT] = 0x16;
+-  t->c_cc[VEOL2] = 0;
++  t->c_cc[VEOL2] = _POSIX_VDISABLE;
+ }
+ 
+ static void xtcgetattr(struct termios *t)
+-- 
+2.50.1 (Apple Git-155)
+

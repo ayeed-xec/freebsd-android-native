@@ -1,0 +1,74 @@
+From 14ae6fc82eb8744f3765bfc180842d6676ec1112 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 08:35:04 +0530
+Subject: [PATCH] toybox: Clone FreeBSD tun and tap interfaces in tunctl
+
+tunctl makes a Linux tun or tap device with TUNSETIFF on /dev/net/tun
+and keeps it with TUNSETPERSIST.  FreeBSD clones a tun(4) or tap(4)
+interface with SIOCIFCREATE2 on a socket, and keeps it until
+SIOCIFDESTROY.  SIOCSIFNAME gives the interface its name, and the
+kernel gives its device file the same name; the owner of /dev/NAME may
+use the interface without root, so -u sets that owner.  -T selects the
+same type as the Linux code does.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/net/tunctl.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/toys/net/tunctl.c b/toys/net/tunctl.c
+index 21dcd0d..bebadbe 100644
+--- a/toys/net/tunctl.c
++++ b/toys/net/tunctl.c
+@@ -29,12 +29,42 @@ config TUNCTL
+ 
+ #define FOR_tunctl
+ #include "toys.h"
++#ifndef __FreeBSD__
+ #include <linux/if_tun.h>
++#endif
+ 
+ GLOBALS(
+   char *u;
+ )
+ 
++#ifdef __FreeBSD__
++// FreeBSD clones a tun(4) or tap(4) interface with SIOCIFCREATE2 and keeps it
++// until SIOCIFDESTROY. SIOCSIFNAME gives it its name, and its device file
++// /dev/NAME then too; the owner of that file may use it without root.
++void tunctl_main(void)
++{
++  struct ifreq ifr;
++  char *name = *toys.optargs, *path;
++  int fd = xsocket(AF_INET, SOCK_DGRAM, 0);
++
++  memset(&ifr, 0, sizeof(ifr));
++  if (FLAG(d)) {
++    xstrncpy(ifr.ifr_name, name, IFNAMSIZ);
++    xioctl(fd, SIOCIFDESTROY, &ifr);
++  } else {
++    // -T gives the type that the code of Linux below gives it.
++    strcpy(ifr.ifr_name, FLAG(T) ? "tun" : "tap");
++    xioctl(fd, SIOCIFCREATE2, &ifr);
++    if (strcmp(ifr.ifr_name, name)) {
++      ifr.ifr_data = name;
++      xioctl(fd, SIOCSIFNAME, &ifr);
++    }
++    if (TT.u && chown(path = xmprintf("/dev/%s", name), xgetuid(TT.u), -1))
++      perror_exit("%s", path);
++  }
++  close(fd);
++}
++#else
+ void tunctl_main(void)
+ {
+   struct ifreq *ifr = (void *)toybuf;
+@@ -51,3 +81,4 @@ void tunctl_main(void)
+     xioctl(fd, TUNSETOWNER, (void *)(long)u);
+   } else xioctl(fd, TUNSETPERSIST, (void *)0);
+ }
++#endif
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,48 @@
+From a43e7198d79911cc71f958bc7576989634955898 Mon Sep 17 00:00:00 2001
+From: AyeedShaikh <ayeedxec@gmail.com>
+Date: Sat, 24 Oct 2026 20:35:18 +0530
+Subject: [PATCH] toybox: Fail ulimit -p with EINVAL off Linux
+
+ulimit -p asked the kernel with fcntl(F_GETPIPE_SZ), and toybox gives
+that name the Linux value 1032 when the libc has none.  FreeBSD has no
+size of a pipe and no such command, so the call gave EINVAL and ulimit
+printed -1.  -H -p reads /proc/sys/fs/pipe-max-size, which FreeBSD does
+not have either.  On another kernel, -p and -H -p fail with EINVAL, the
+error of a kernel without the command, and -a leaves -p out, as it does
+for the other limits that the kernel does not have.
+
+The project freebsd-android-native carries this patch (owner decision
+O17).
+---
+ toys/posix/ulimit.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/toys/posix/ulimit.c b/toys/posix/ulimit.c
+index 14313ef..895d852 100644
+--- a/toys/posix/ulimit.c
++++ b/toys/posix/ulimit.c
+@@ -95,7 +95,7 @@ void ulimit_main(void)
+ 
+ #ifndef __linux__
+     // -a leaves out the limits that the kernel does not have.
+-    if (FLAG(a) && map[i] == RLIM_NLIMITS) continue;
++    if (FLAG(a) && (map[i] == RLIM_NLIMITS || (1<<i) == FLAG_p)) continue;
+ #endif
+ 
+     if (get && prlimit(TT.P, map[i], 0, &rr)) perror_exit("-%c", flags[i]);
+@@ -103,6 +103,12 @@ void ulimit_main(void)
+       if (FLAG(a)) printf("-%c: %-25s ", flags[i], desc[i]);
+       if (get) {
+         if ((1<<i)&FLAG_p) {
++#ifndef __linux__
++          // The kernel has no size of a pipe, and F_GETPIPE_SZ and
++          // pipe-max-size are Linux's.
++          errno = EINVAL;
++          perror_exit("-p");
++#endif
+           if (FLAG(H))
+             xreadfile("/proc/sys/fs/pipe-max-size", toybuf, sizeof(toybuf));
+           else {
+-- 
+2.50.1 (Apple Git-155)
+
