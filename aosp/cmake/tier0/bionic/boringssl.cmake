@@ -41,7 +41,9 @@
 # Soong's global flags (cc/config/global.go); BoringSSL's
 # CompilerTest.NoStrictAliasing asserts the last one.  On this target
 # BoringSSL takes its FreeBSD code: the CPU features from the ID registers,
-# which the kernel traps, getentropy() and pthread_atfork().
+# which the kernel traps, and getentropy().  Its patch in
+# aosp/patches/boringssl makes it detect a fork with MADV_WIPEONFORK, as on
+# Android, in place of pthread_atfork().
 
 set(BORINGSSL "${AOSP_EXTERNAL}/boringssl")
 if(NOT EXISTS "${BORINGSSL}/src/crypto/fipsmodule/bcm.cc")
@@ -160,3 +162,17 @@ set(BORINGSSL_TEST_ENV "LD_LIBRARY_PATH=${GEN}" "${RUN_SUITE_PATH}"
     "BORINGSSL_TEST_DATA_ROOT=/data/local/tmp/boringssl_crypto_test/src")
 set_tests_properties(boringssl_crypto_test PROPERTIES ENVIRONMENT
     "${BORINGSSL_TEST_ENV}")
+
+# fork_detect_freebsd_test: libcrypto.so in the children of _Fork() and
+# clone(), which run no atfork handlers.
+system_test(fork_detect_freebsd_test
+    SRCS "${CMAKE_CURRENT_SOURCE_DIR}/fork_detect_freebsd_test.cpp"
+    LIBS gtest_main crypto_shared
+    INCLUDES "${BORINGSSL}/src/include")
+add_dependencies(fork_detect_freebsd_test crypto_hashed)
+add_test(NAME fork_detect_freebsd_test COMMAND ${RUN_SUITE}
+    -j "${GEN}/bionic-tests-jail.conf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/fork_detect_freebsd_test.excluded"
+    "$<TARGET_FILE:linker64>" "$<TARGET_FILE:fork_detect_freebsd_test>")
+set_tests_properties(fork_detect_freebsd_test PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${GEN};${RUN_SUITE_PATH}")
