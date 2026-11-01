@@ -39,9 +39,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(bionic_freebsd_tier0 C CXX ASM)
 
-# libc.so and linker64 are shared objects: build all code with -fPIC, as
-# AOSP does.
+# Soong gives -fPIC to libraries and -fPIE to programs.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+include(soong-flags.cmake)
 
 set(BIONIC_SRC "/home/dev/aosp/platform_bionic" CACHE PATH
     "bionic-freebsd checkout (branch freebsd)")
@@ -71,35 +71,38 @@ set(GEN "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROPINFO "${AOSP_SYSTEM}/core/property_service/libpropertyinfoparser")
 
 # Android code sees the bionic-freebsd headers only, never /usr/include,
-# and the Linux-named headers of linux-compat after them.  -O2 and the
-# sections flags are bionic's global flags.
-add_compile_options(-nostdlibinc -O2 -ffunction-sections -fdata-sections
-    -Wall -Werror)
+# and the Linux-named headers of linux-compat after them.
 include_directories(SYSTEM "${LIBC}/include" "${LIBC}/include/linux-compat")
 include_directories("${LIBC}")
 
-# libc_common_flags and libc_defaults of libc/Android.bp.  Android clang
-# makes unwind tables by default.  The -Wno-* flags in the last lines stop
-# warnings that clang 22 and the -Wundef of our clang configuration give,
-# and AOSP's clang does not.
-set(LIBC_FLAGS -D_LIBC=1 -DUSE_SCUDO -Wextra -Wunused -Wno-char-subscripts
+# libc_common_flags and libc_defaults of libc/Android.bp, with the
+# malloc_zero_contents flag of a userdebug build.
+set(LIBC_COMMON_FLAGS -D_LIBC=1 -Wall -Wextra -Wunused -Wno-char-subscripts
     -Wno-deprecated-declarations -Wno-gcc-compat -Wframe-larger-than=2048
-    -Wno-reorder-init-list -fno-builtin -fasynchronous-unwind-tables
-    $<$<COMPILE_LANGUAGE:C>:-std=gnu99>
-    $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++20 -nostdinc++ -fno-exceptions
-    -fno-rtti -Wno-c99-designator -Wno-vla-cxx-extension>
-    -Wno-undef -Wno-non-c-typedef-for-linkage -Wno-missing-field-initializers
-    -Wno-unterminated-string-initialization)
+    -Wno-reorder-init-list -Werror=pointer-to-int-cast
+    -Werror=int-to-pointer-cast -Werror=type-limits -Werror
+    -Wexit-time-destructors -fno-builtin)
+set(LIBC_CFLAGS ${LIBC_COMMON_FLAGS} -DUSE_SCUDO -DSCUDO_ZERO_CONTENTS)
 set(LIBC_INCLUDES "${LIBC}/async_safe/include" "${LIBC}/platform"
     "${LIBC}/stdio" "${LIBC}/system_properties/include" "${PROPINFO}/include"
     "${BIONIC_SRC}/libstdc++/include" "${AOSP_SYSTEM}/core/libcutils/include"
     "${AOSP_SYSTEM}/logging/liblog/include"
     "${SCUDO_SRC}/standalone/include" "${GWP_ASAN_SRC}")
 
+# libc_objects(<name> SRCS <src>... [FLAGS <cflags>...]
+#     [CPPFLAGS <cppflags>...] [ASFLAGS <asflags>...] [INCLUDES <dir>...]
+#     [SOONG <soong_cc options>...])
+# A group of libc_defaults: the cflags go to C and C++, the asflags to
+# assembly.
 function(libc_objects name)
-	cmake_parse_arguments(L "" "" "SRCS;FLAGS;INCLUDES" ${ARGN})
+	cmake_parse_arguments(L "" ""
+	    "SRCS;FLAGS;CPPFLAGS;ASFLAGS;INCLUDES;SOONG" ${ARGN})
 	add_library(${name} OBJECT ${L_SRCS})
-	target_compile_options(${name} PRIVATE ${LIBC_FLAGS} ${L_FLAGS})
+	soong_cc(${name} LTO_NEVER C_STD gnu99 ${L_SOONG})
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${LIBC_CFLAGS};${L_FLAGS}>"
+	    "$<$<COMPILE_LANGUAGE:CXX>:${L_CPPFLAGS}>"
+	    "$<$<COMPILE_LANGUAGE:ASM>:${LIBC_COMMON_FLAGS};${L_ASFLAGS}>")
 	target_include_directories(${name} PRIVATE ${L_INCLUDES}
 	    ${LIBC_INCLUDES})
 endfunction()
@@ -123,21 +126,21 @@ libc_objects(libc_bootstrap
         "${LIBC}/bionic/libc_init_mte.cpp"
     FLAGS -fno-stack-protector -ffreestanding)
 libc_objects(libc_init_static
-    SRCS "${LIBC}/bionic/libc_init_static.cpp"
+    SRCS "${LIBC}/bionic/libc_init_static.cpp" "${LIBC}/bionic/elf_note.cpp"
     FLAGS -fno-stack-protector -ffreestanding)
 libc_objects(libc_init_dynamic
     SRCS "${LIBC}/bionic/libc_init_dynamic.cpp"
     FLAGS -fno-stack-protector)
 
-# libc_bionic, libasync_safe and libsystemproperties: only the files that
-# the startup code and stdio need.
+# libc_bionic, libasync_safe, libsystemproperties, libpropertyinfoparser
+# and the libstdc++ sources: only the files that the startup code and stdio
+# need.
 libc_objects(libc_bionic
-    SRCS "${LIBC}/async_safe/async_safe_log.cpp"
+    SRCS "${LIBC}/bionic/android_unsafe_frame_pointer_chase.cpp"
         "${LIBC}/bionic/__bionic_get_shell_path.cpp"
         "${LIBC}/bionic/__gnu_basename.cpp"
         "${LIBC}/bionic/__libc_current_sigrtmax.cpp"
         "${LIBC}/bionic/__libc_current_sigrtmin.cpp"
-        "${LIBC}/bionic/__cxa_guard.cpp"
         "${LIBC}/bionic/__cxa_thread_atexit_impl.cpp"
         "${LIBC}/bionic/__errno.cpp"
         "${LIBC}/bionic/__progname.cpp"
@@ -166,7 +169,6 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/dirent.cpp"
         "${LIBC}/bionic/div.cpp"
         "${LIBC}/bionic/dup.cpp"
-        "${LIBC}/bionic/elf_note.cpp"
         "${LIBC}/bionic/env.cpp"
         "${LIBC}/bionic/environ.cpp"
         "${LIBC}/bionic/err.cpp"
@@ -187,7 +189,6 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/getpgrp.cpp"
         "${LIBC}/bionic/getpid.cpp"
         "${LIBC}/bionic/gettid.cpp"
-        "${LIBC}/bionic/heap_tagging.cpp"
         "${LIBC}/bionic/heap_zero_init.cpp"
         "${LIBC}/bionic/iconv.cpp"
         "${LIBC}/bionic/ifaddrs.cpp"
@@ -208,7 +209,6 @@ libc_objects(libc_bionic
         "${LIBC}/bionic/mkdir.cpp"
         "${LIBC}/bionic/mknod.cpp"
         "${LIBC}/bionic/mntent.cpp"
-        "${LIBC}/bionic/new.cpp"
         "${LIBC}/bionic/NetdClientDispatch.cpp"
         "${LIBC}/bionic/netdb.cpp"
         "${LIBC}/bionic/net_if.cpp"
@@ -295,13 +295,24 @@ libc_objects(libc_bionic
         "${LIBC}/stdio/parsefloat.c"
         "${LIBC}/stdio/vfscanf.cpp"
         "${LIBC}/stdio/vfwscanf.cpp"
-        "${LIBC}/system_properties/context_node.cpp"
+    CPPFLAGS -Wold-style-cast)
+libc_objects(libasync_safe SRCS "${LIBC}/async_safe/async_safe_log.cpp")
+libc_objects(libsystemproperties
+    SRCS "${LIBC}/system_properties/context_node.cpp"
         "${LIBC}/system_properties/contexts_serialized.cpp"
         "${LIBC}/system_properties/contexts_split.cpp"
         "${LIBC}/system_properties/prop_area.cpp"
         "${LIBC}/system_properties/prop_info.cpp"
-        "${LIBC}/system_properties/system_properties.cpp"
-        "${PROPINFO}/property_info_parser.cpp")
+        "${LIBC}/system_properties/system_properties.cpp")
+libc_objects(libstdcxx SRCS "${LIBC}/bionic/__cxa_guard.cpp"
+    "${LIBC}/bionic/new.cpp")
+# libpropertyinfoparser of system/core: no libc_defaults.
+add_library(libpropertyinfoparser OBJECT "${PROPINFO}/property_info_parser.cpp")
+soong_cc(libpropertyinfoparser)
+target_compile_options(libpropertyinfoparser PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>")
+target_include_directories(libpropertyinfoparser PRIVATE "${PROPINFO}/include"
+    "${LIBC}/async_safe/include")
 
 # getpwnam(3), getgrnam(3) and the other passwd and group functions: the
 # Android ids of libcutils, then the passwd and group files of the
@@ -377,31 +388,30 @@ set_source_files_properties(
 set_source_files_properties("${LIBC}/bionic/freebsd/statfs.c"
     "${LIBC}/bionic/freebsd/mount.c" PROPERTIES
     COMPILE_OPTIONS -Wframe-larger-than=4096)
-# iconv.cpp gives a char32_t below 0x10000 to a char16_t parameter, and
-# clang 22 warns about that conversion.
-set_source_files_properties("${LIBC}/bionic/iconv.cpp" PROPERTIES
-    COMPILE_OPTIONS -Wno-character-conversion)
 
-# The allocator sources and flags follow their Android.bp files.  The
-# malloc front end follows libc/Android.bp for static and shared libc.
+# The allocators follow their Android.bp files: libscudo_defaults and
+# libscudo of external/scudo, and gwp_asan, which has no flags of its own.
+# The malloc front end is libc_sources_static and libc_sources_shared of
+# libc/Android.bp, with the flags of libc_library_defaults.
 set(SCUDO_SRCS checksum common condition_variable_linux crc32_hw flags
     flags_parser freebsd linux mem_map mem_map_linux release report
     report_linux string_utils timing wrappers_c_bionic)
 list(TRANSFORM SCUDO_SRCS PREPEND "${SCUDO_SRC}/standalone/")
 list(TRANSFORM SCUDO_SRCS APPEND ".cpp")
 add_library(scudo OBJECT ${SCUDO_SRCS})
+soong_cc(scudo EXTERNAL)
 target_include_directories(scudo PRIVATE "${LIBC}" "${SCUDO_SRC}/config"
     "${SCUDO_SRC}/standalone/include" "${LIBC}/platform"
     "${BIONIC_SRC}/libstdc++/include")
-# The compiler configuration adds -Wundef; Android's scudo flags do not.
-target_compile_options(scudo PRIVATE -std=gnu++20 -O3 -fno-rtti
-    -fno-stack-protector -nostdinc++ -fno-exceptions -mcrc
-    -Wall -Wextra -Wunused -Wno-unused-result -Wno-undef -Wconversion
-    -Werror=pointer-to-int-cast -Werror=int-to-pointer-cast
-    -Werror=thread-safety -Werror=type-limits -Werror
-    -DSCUDO_USE_CUSTOM_CONFIG -D_BIONIC=1
+set(SCUDO_CFLAGS -DSCUDO_USE_CUSTOM_CONFIG -Wall -Wextra -Wunused
+    -Wno-unused-result -Wconversion -Werror=pointer-to-int-cast
+    -Werror=int-to-pointer-cast -Werror=thread-safety -Werror=type-limits
+    -Werror -O3 -fno-rtti -fno-stack-protector -mcrc -D_BIONIC=1
     -DSCUDO_HAS_PLATFORM_TLS_SLOT -DSCUDO_MIN_ALIGNMENT_LOG=4
     -DHAVE_ANDROID_UNSAFE_FRAME_POINTER_CHASE -DSCUDO_ENABLE_TRACING)
+target_compile_options(scudo PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${SCUDO_CFLAGS}>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-nostdinc++;-fno-exceptions>")
 set(GWP_ASAN_SRCS common crash_handler guarded_pool_allocator
     platform_specific/common_posix
     platform_specific/guarded_pool_allocator_posix
@@ -410,22 +420,17 @@ set(GWP_ASAN_SRCS common crash_handler guarded_pool_allocator
 list(TRANSFORM GWP_ASAN_SRCS PREPEND "${GWP_ASAN_SRC}/gwp_asan/")
 list(TRANSFORM GWP_ASAN_SRCS APPEND ".cpp")
 add_library(gwp_asan OBJECT ${GWP_ASAN_SRCS})
+soong_cc(gwp_asan EXTERNAL)
 target_include_directories(gwp_asan PRIVATE "${GWP_ASAN_SRC}"
     "${BIONIC_SRC}/libstdc++/include")
-target_compile_options(gwp_asan PRIVATE -std=gnu++20 -nostdinc++
-    -fno-exceptions -fno-rtti -fno-emulated-tls)
 set(MALLOC_COMMON "${LIBC}/bionic/android_mallopt.cpp"
-    "${LIBC}/bionic/malloc_common.cpp" "${LIBC}/bionic/malloc_limit.cpp"
-    "${LIBC}/bionic/gwp_asan_wrappers.cpp"
-    "${LIBC}/bionic/android_unsafe_frame_pointer_chase.cpp")
-libc_objects(libc_malloc_static SRCS ${MALLOC_COMMON} FLAGS -DLIBC_STATIC)
-libc_objects(libc_malloc_shared SRCS ${MALLOC_COMMON}
-    "${LIBC}/bionic/malloc_common_dynamic.cpp"
-    "${LIBC}/bionic/malloc_heapprofd.cpp")
+    "${LIBC}/bionic/gwp_asan_wrappers.cpp" "${LIBC}/bionic/heap_tagging.cpp"
+    "${LIBC}/bionic/malloc_common.cpp" "${LIBC}/bionic/malloc_limit.cpp")
+libc_objects(libc_sources_static SRCS ${MALLOC_COMMON} FLAGS -DLIBC_STATIC
+    ASFLAGS -DPLATFORM_SDK_VERSION=${PLATFORM_SDK_VERSION}
+    SOONG AFDO MODULE libc)
 set(MALLOC_STATIC $<TARGET_OBJECTS:scudo> $<TARGET_OBJECTS:gwp_asan>
-    $<TARGET_OBJECTS:libc_malloc_static>)
-set(MALLOC_SHARED $<TARGET_OBJECTS:scudo> $<TARGET_OBJECTS:gwp_asan>
-    $<TARGET_OBJECTS:libc_malloc_shared>)
+    $<TARGET_OBJECTS:libc_sources_static>)
 
 # libc_openbsd and libc_gdtoa: stdio internals, arc4random and dtoa.
 set(OPENBSD "${LIBC}/upstream-openbsd")
@@ -571,8 +576,10 @@ libc_objects(libc_tzcode
         -Dlint
     INCLUDES "${LIBC}/tzcode" "${LIBC}/upstream-freebsd/android/include")
 
-# libc_common of libc/Android.bp.
-set(LIBC_COMMON "${GEN}/syscalls-arm64.S"
+# libc_syscalls and libc_common of libc/Android.bp.
+libc_objects(libc_syscalls SRCS "${GEN}/syscalls-arm64.S")
+set(LIBC_COMMON $<TARGET_OBJECTS:libc_syscalls>
+    $<TARGET_OBJECTS:libasync_safe>
     $<TARGET_OBJECTS:libc_bootstrap>
     $<TARGET_OBJECTS:libc_bionic>
     $<TARGET_OBJECTS:libc_dns>
@@ -586,33 +593,39 @@ set(LIBC_COMMON "${GEN}/syscalls-arm64.S"
     $<TARGET_OBJECTS:libc_freebsd>
     $<TARGET_OBJECTS:libc_freebsd_ldexp>
     $<TARGET_OBJECTS:libc_netbsd>
-    $<TARGET_OBJECTS:libc_tzcode>)
+    $<TARGET_OBJECTS:libc_tzcode>
+    $<TARGET_OBJECTS:libstdcxx>
+    $<TARGET_OBJECTS:libsystemproperties>
+    $<TARGET_OBJECTS:libpropertyinfoparser>)
 add_library(c_static STATIC ${LIBC_COMMON}
     $<TARGET_OBJECTS:libc_init_static> ${MALLOC_STATIC})
+soong_cc(c_static LTO_NEVER AFDO MODULE libc)
 set_target_properties(c_static PROPERTIES OUTPUT_NAME c)
 # libc_nomalloc: the C library of linker64.
 add_library(c_nomalloc STATIC ${LIBC_COMMON}
     $<TARGET_OBJECTS:libc_init_static>)
+soong_cc(c_nomalloc LTO_NEVER)
 
-# crt objects.  The code before TLS setup must not use the stack
-# protector, because the guard is in TLS (slot 5).
-add_library(crt_parts OBJECT
-    "${LIBC}/arch-common/bionic/crtbrand.S"
+# The crt objects: crt_and_memtag_defaults, crtbrand and the crt modules
+# of libc/Android.bp.
+set(CRT_CFLAGS -Wno-gcc-compat -Wall -Werror)
+function(crt_object name src)
+	add_library(${name} OBJECT "${src}" ${ARGN})
+	soong_cc(${name} CC_OBJECT)
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${CRT_CFLAGS}>")
+endfunction()
+crt_object(crt_parts "${LIBC}/arch-common/bionic/crtbrand.S"
     "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
-target_compile_definitions(crt_parts PRIVATE
-    PLATFORM_SDK_VERSION=${PLATFORM_SDK_VERSION})
-add_library(crtbegin_static_o OBJECT
-    "${LIBC}/arch-common/bionic/crtbegin.c")
-target_compile_definitions(crtbegin_static_o PRIVATE CRTBEGIN_STATIC)
-target_compile_options(crtbegin_static_o PRIVATE -fno-stack-protector)
-add_library(crtbegin_dynamic_o OBJECT
-    "${LIBC}/arch-common/bionic/crtbegin.c")
-target_compile_options(crtbegin_dynamic_o PRIVATE -fno-stack-protector)
-add_library(crtend_o OBJECT "${LIBC}/arch-common/bionic/crtend.S")
+target_compile_options(crt_parts PRIVATE
+    "$<$<COMPILE_LANGUAGE:ASM>:-DPLATFORM_SDK_VERSION=${PLATFORM_SDK_VERSION}>")
+crt_object(crtbegin_static_o "${LIBC}/arch-common/bionic/crtbegin.c")
+target_compile_options(crtbegin_static_o PRIVATE -DCRTBEGIN_STATIC)
+crt_object(crtbegin_dynamic_o "${LIBC}/arch-common/bionic/crtbegin.c")
+crt_object(crtend_o "${LIBC}/arch-common/bionic/crtend.S")
 # crtbegin_so.o and crtend_so.o: for shared objects other than libc.so.
-add_library(crtbegin_so_o OBJECT "${LIBC}/arch-common/bionic/crtbegin_so.c")
-target_compile_options(crtbegin_so_o PRIVATE -fno-stack-protector)
-add_library(crtend_so_o OBJECT "${LIBC}/arch-common/bionic/crtend_so.S")
+crt_object(crtbegin_so_o "${LIBC}/arch-common/bionic/crtbegin_so.c")
+crt_object(crtend_so_o "${LIBC}/arch-common/bionic/crtend_so.S")
 
 foreach(crt crtbegin_static crtbegin_dynamic crtbegin_so)
 	add_custom_command(OUTPUT "${GEN}/${crt}.o"
@@ -633,38 +646,40 @@ add_custom_target(crt ALL DEPENDS "${GEN}/crtbegin_static.o"
     "${GEN}/crtend_so.o")
 
 set(LINKER "${BIONIC_SRC}/linker")
-set(SO_LINK_OPTIONS -nostdlib -fuse-ld=lld -Wl,--no-undefined
-    -Wl,--gc-sections)
 
 # ld-android.so: the stub that libc.so links against.  At run time,
 # linker64 itself provides these symbols under this name.
 add_library(ld_android SHARED "${LINKER}/ld_android.cpp")
+soong_cc(ld_android)
 set_target_properties(ld_android PROPERTIES PREFIX "" OUTPUT_NAME ld-android)
-target_compile_options(ld_android PRIVATE -Wextra -Wunused -nostdinc++)
-target_link_options(ld_android PRIVATE -nostdlib -fuse-ld=lld
+target_compile_options(ld_android PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Wextra;-Wunused;-Werror>")
+target_link_options(ld_android PRIVATE
     "-Wl,--version-script=${LINKER}/linker.generic.map")
 
 # libdl.so: a shim over the __loader_* functions of linker64.  It and
 # libdl_android.so have no crt objects (nocrt in libdl/Android.bp), so they
 # get the FreeBSD ABI note directly, as libc.so and linker64 do.
+set(LIBDL_CFLAGS -Wall -Wextra -Wunused -Werror)
 add_library(dl_shared SHARED "${BIONIC_SRC}/libdl/libdl.cpp"
     "${BIONIC_SRC}/libdl/libdl_cfi.cpp"
     "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
+soong_cc(dl_shared)
 set_target_properties(dl_shared PROPERTIES OUTPUT_NAME dl SKIP_BUILD_RPATH ON)
-target_compile_options(dl_shared PRIVATE -Wextra -Wunused -nostdinc++
-    -std=gnu++20)
-target_link_options(dl_shared PRIVATE ${SO_LINK_OPTIONS} -Wl,-soname,libdl.so)
+target_compile_options(dl_shared PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${LIBDL_CFLAGS}>")
+target_link_options(dl_shared PRIVATE -Wl,-soname,libdl.so)
 target_link_libraries(dl_shared PRIVATE ld_android)
 
 # libdl_android.so wraps the platform-only __loader_* functions.
 add_library(dl_android SHARED "${BIONIC_SRC}/libdl/libdl_android.cpp"
     "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
+soong_cc(dl_android)
 set_target_properties(dl_android PROPERTIES OUTPUT_NAME dl_android
     SKIP_BUILD_RPATH ON)
-target_compile_options(dl_android PRIVATE -Wextra -Wunused -nostdinc++
-    -std=gnu++20)
-target_link_options(dl_android PRIVATE ${SO_LINK_OPTIONS}
-    -Wl,-soname,libdl_android.so)
+target_compile_options(dl_android PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${LIBDL_CFLAGS}>")
+target_link_options(dl_android PRIVATE -Wl,-soname,libdl_android.so)
 target_link_libraries(dl_android PRIVATE ld_android)
 
 # libc.so: libc_common, the dynamic startup, the allocator and
@@ -673,16 +688,20 @@ target_link_libraries(dl_android PRIVATE ld_android)
 libc_objects(libc_sources_shared
     SRCS "${LIBC}/arch-common/bionic/crtbegin_so.c"
         "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S"
+        ${MALLOC_COMMON}
+        "${LIBC}/bionic/malloc_common_dynamic.cpp"
         "${LIBC}/bionic/android_profiling_dynamic.cpp"
+        "${LIBC}/bionic/malloc_heapprofd.cpp"
         "${LIBC}/bionic/NetdClient.cpp"
-        "${LIBC}/arch-common/bionic/crtend_so.S")
-set_source_files_properties("${LIBC}/arch-common/bionic/crtbegin_so.c"
-    PROPERTIES COMPILE_OPTIONS -fno-stack-protector)
+        "${LIBC}/arch-common/bionic/crtend_so.S"
+    ASFLAGS -DPLATFORM_SDK_VERSION=${PLATFORM_SDK_VERSION}
+    SOONG AFDO MODULE libc)
 add_library(c_shared SHARED ${LIBC_COMMON}
-    $<TARGET_OBJECTS:libc_init_dynamic> ${MALLOC_SHARED}
-    $<TARGET_OBJECTS:libc_sources_shared>)
+    $<TARGET_OBJECTS:libc_init_dynamic> $<TARGET_OBJECTS:scudo>
+    $<TARGET_OBJECTS:gwp_asan> $<TARGET_OBJECTS:libc_sources_shared>)
+soong_cc(c_shared LTO_NEVER AFDO MODULE libc NO_PACK_RELOCATIONS)
 set_target_properties(c_shared PROPERTIES OUTPUT_NAME c SKIP_BUILD_RPATH ON)
-target_link_options(c_shared PRIVATE ${SO_LINK_OPTIONS} -Wl,-soname,libc.so)
+target_link_options(c_shared PRIVATE -Wl,-soname,libc.so)
 target_link_libraries(c_shared PRIVATE ld_android dl_shared dl_android)
 if(BUILTINS_LIB)
 	target_link_libraries(c_shared PRIVATE "${BUILTINS_LIB}")
@@ -696,22 +715,26 @@ set(CXX_INCLUDE "${BIONIC_SYSROOT}/usr/include/c++/v1")
 # compiler's implicit ones and leaves out its -isystem, but -nostdlibinc
 # takes it away again.  Keep it explicit.
 list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "${CXX_INCLUDE}")
-# AOSP's global flags for clang 22 warnings that AOSP code still gives.
-set(AOSP_CXX_FLAGS -fno-exceptions -Wno-vla-cxx-extension
-    -Wno-c99-designator -Wno-missing-field-initializers
-    -Wno-non-c-typedef-for-linkage)
 set(LIBBASE "${AOSP_SYSTEM}/libbase")
 set(LIBLOG "${AOSP_SYSTEM}/logging/liblog")
 set(ZIPARCHIVE "${AOSP_SYSTEM}/libziparchive")
+
+# aosp_library(<name> SRCS <src>... [FLAGS <cflags>...]
+#     [CONLYFLAGS <conlyflags>...] [CPPFLAGS <cppflags>...]
+#     [INCLUDES <dir>...] [SOONG <soong_cc options>...])
+# A static library of an Android.bp module: the cflags go to C and C++,
+# the conlyflags to C and the cppflags to C++.
 function(aosp_library name)
-	cmake_parse_arguments(L "" "" "SRCS;FLAGS;INCLUDES" ${ARGN})
+	cmake_parse_arguments(L "" ""
+	    "SRCS;FLAGS;CONLYFLAGS;CPPFLAGS;INCLUDES;SOONG" ${ARGN})
 	add_library(${name} STATIC ${L_SRCS})
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_cc(${name} ${L_SOONG})
+	soong_system_includes(${name} "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE ${L_INCLUDES})
-	# NDEBUG as in AOSP release builds: ALOGV() compiles to nothing.
-	target_compile_options(${name} PRIVATE -D_FILE_OFFSET_BITS=64 -DNDEBUG
-	    "$<$<COMPILE_LANGUAGE:CXX>:${AOSP_CXX_FLAGS}>" ${L_FLAGS})
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${L_FLAGS}>"
+	    "$<$<COMPILE_LANGUAGE:C>:${L_CONLYFLAGS}>"
+	    "$<$<COMPILE_LANGUAGE:CXX>:${L_CPPFLAGS}>")
 endfunction()
 
 include(zlib.cmake)
@@ -721,7 +744,8 @@ set(FMTLIB "${AOSP_EXTERNAL}/fmtlib")
 aosp_library(fmtlib
     SRCS "${FMTLIB}/src/format.cc"
     FLAGS -fno-exceptions -UNDEBUG
-    INCLUDES "${FMTLIB}/include")
+    INCLUDES "${FMTLIB}/include"
+    SOONG EXTERNAL)
 aosp_library(base
     SRCS "${LIBBASE}/chrono_utils.cpp" "${LIBBASE}/cmsg.cpp"
         "${LIBBASE}/file.cpp" "${LIBBASE}/hex.cpp" "${LIBBASE}/logging.cpp"
@@ -731,9 +755,15 @@ aosp_library(base
         "${LIBBASE}/result.cpp" "${LIBBASE}/stringprintf.cpp"
         "${LIBBASE}/strings.cpp" "${LIBBASE}/threads.cpp"
         "${LIBBASE}/test_utils.cpp" "${LIBBASE}/errors_unix.cpp"
-    FLAGS -std=gnu++23 -Wextra -Wexit-time-destructors
-    INCLUDES "${LIBBASE}/include" "${LIBLOG}/include" "${FMTLIB}/include")
+    FLAGS -D_FILE_OFFSET_BITS=64
+    CPPFLAGS -Wexit-time-destructors
+    INCLUDES "${LIBBASE}/include" "${LIBLOG}/include" "${FMTLIB}/include"
+    SOONG CPP_STD gnu++23)
 target_link_libraries(base INTERFACE fmtlib)
+# liblog.defaults with the userdebug flags.
+set(LIBLOG_CFLAGS -Wexit-time-destructors -DLIBLOG_LOG_TAG=1006
+    -DSNET_EVENT_LOG_TAG=1397638484 -DANDROID_DEBUGGABLE=0
+    -UANDROID_DEBUGGABLE -DANDROID_DEBUGGABLE=1)
 aosp_library(log
     SRCS "${LIBLOG}/log_event_list.cpp" "${LIBLOG}/log_event_write.cpp"
         "${LIBLOG}/logger_name.cpp" "${LIBLOG}/logger_read.cpp"
@@ -742,33 +772,36 @@ aosp_library(log
         "${LIBLOG}/log_time.cpp" "${LIBLOG}/pmsg_reader.cpp"
         "${LIBLOG}/pmsg_writer.cpp" "${LIBLOG}/logd_reader.cpp"
         "${LIBLOG}/logd_writer.cpp"
-    FLAGS -std=gnu++20 -DLIBLOG_LOG_TAG=1006
-        -DSNET_EVENT_LOG_TAG=1397638484 -DANDROID_DEBUGGABLE=0
+    FLAGS ${LIBLOG_CFLAGS}
     INCLUDES "${LIBLOG}/include" "${LIBBASE}/include"
         "${AOSP_SYSTEM}/core/libcutils/include"
         "${AOSP_SYSTEM}/core/libutils/include"
-        "${AOSP_SYSTEM}/core/libsystem/include")
+        "${AOSP_SYSTEM}/core/libsystem/include"
+    SOONG AFDO MODULE liblog)
 # libtinyxml2 for the malloc_info() tests, with its Android flags.
 set(TINYXML2 "${AOSP_EXTERNAL}/tinyxml2")
 aosp_library(tinyxml2
     SRCS "${TINYXML2}/tinyxml2.cpp"
     FLAGS -Wall -Werror -Wno-implicit-fallthrough -DDEBUG -DANDROID_NDK
-    INCLUDES "${TINYXML2}" "${LIBLOG}/include")
+    INCLUDES "${TINYXML2}" "${LIBLOG}/include"
+    SOONG EXTERNAL)
+# libziparchive_flags and libziparchive.
+set(ZIPARCHIVE_CFLAGS -DZLIB_CONST -Werror -D_FILE_OFFSET_BITS=64)
+set(ZIPARCHIVE_CPPFLAGS -Wno-missing-field-initializers -Wconversion
+    -Wno-sign-conversion -Wold-style-cast)
 aosp_library(ziparchive
     SRCS "${ZIPARCHIVE}/zip_archive.cc"
         "${ZIPARCHIVE}/zip_archive_stream_entry.cc"
         "${ZIPARCHIVE}/zip_cd_entry_map.cc" "${ZIPARCHIVE}/zip_error.cpp"
-    FLAGS -std=gnu++20 -DZLIB_CONST -DZIPARCHIVE_DISABLE_CALLBACK_API=0
-        -DINCFS_SUPPORT_DISABLED=1
-        -Wno-missing-field-initializers -Wconversion -Wno-sign-conversion
+    FLAGS ${ZIPARCHIVE_CFLAGS} -DINCFS_SUPPORT_DISABLED=1
+    CPPFLAGS ${ZIPARCHIVE_CPPFLAGS}
     INCLUDES "${ZIPARCHIVE}/include" "${ZIPARCHIVE}/incfs_support/include"
         "${LIBBASE}/include" "${LIBLOG}/include" "${ZLIB}")
 
 # linker64: linker_bin_template and linker_binary_defaults of
 # linker/Android.bp, with the linux_bionic choices (the debuggerd stub, no
-# Rust).  It is a shared object that is linked statically (no -static: the
-# FreeBSD clang driver then drops -shared).  The FreeBSD ABI note lets the
-# kernel run it directly too.
+# Rust).  It is a static executable with -shared in its own link flags.
+# The FreeBSD ABI note lets the kernel run it directly too.
 add_executable(linker64
     "${LINKER}/arch/arm64/begin.S"
     "${LINKER}/arch/arm64/tlsdesc_resolver.S"
@@ -789,20 +822,28 @@ add_executable(linker64
     "${LINKER}/linker_main.cpp" "${LINKER}/linker_memory.cpp"
     "${LINKER}/linker_debuggerd_stub.cpp"
     "${LIBC}/arch-common/freebsd/crtbrand_freebsd.S")
-target_include_directories(linker64 SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
+soong_cc(linker64 STATIC AFDO MODULE linker)
+soong_system_includes(linker64 "${CXX_INCLUDE}")
 target_include_directories(linker64 PRIVATE "${LIBC}/async_safe/include"
     "${LIBC}/system_properties/include" "${LIBBASE}/include"
     "${LIBLOG}/include" "${ZIPARCHIVE}/include")
-target_compile_options(linker64 PRIVATE -fno-stack-protector
-    -DZIPARCHIVE_DISABLE_CALLBACK_API=0
-    -Wstrict-overflow=5 -fvisibility=hidden -Wextra -Wunused
-    "$<$<COMPILE_LANGUAGE:CXX>:-std=gnu++20;${AOSP_CXX_FLAGS};-Wold-style-cast>")
+# linker_common_flags, then the cppflags of linker_defaults with the
+# userdebug flag.
+set(LINKER_FLAGS -fno-stack-protector -Wstrict-overflow=5 -fvisibility=hidden
+    -Wall -Wextra -Wunused -Werror)
+target_compile_options(linker64 PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${LINKER_FLAGS}>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast;-DUSE_LD_CONFIG_FILE>"
+    "$<$<COMPILE_LANGUAGE:ASM>:${LINKER_FLAGS}>")
+# linker_main.cpp is liblinker_main, which adds -ffreestanding.
 set_source_files_properties("${LINKER}/linker_main.cpp" PROPERTIES
     COMPILE_OPTIONS -ffreestanding)
-target_link_options(linker64 PRIVATE -nostdlib -shared
-    -fuse-ld=lld -Wl,--no-undefined -Wl,-Bsymbolic -Wl,--exclude-libs,ALL
-    -Wl,-soname,ld-android.so -Wl,--pack-dyn-relocs=relr -Wl,-e,_start
-    -Wl,--gc-sections "-Wl,--version-script=${LINKER}/linker.generic.map")
+# The Android clang driver gives lld both -shared and -static; the FreeBSD
+# driver drops -shared after -static, so it goes to lld directly.
+target_link_options(linker64 PRIVATE -Wl,-shared -Wl,-Bsymbolic
+    -Wl,--exclude-libs,ALL -Wl,-soname,ld-android.so
+    -Wl,--pack-dyn-relocs=relr
+    "-Wl,--version-script=${LINKER}/linker.generic.map")
 target_link_libraries(linker64 PRIVATE c_nomalloc
     "${BIONIC_SYSROOT}/usr/lib/libc++.a" "${BIONIC_SYSROOT}/usr/lib/libc++abi.a"
     base ziparchive z log)
@@ -818,6 +859,7 @@ add_custom_command(OUTPUT "${GEN}/abi_check.c"
     DEPENDS "${PARITY}/abi_probe.c"
     VERBATIM)
 add_library(abi_check OBJECT "${GEN}/abi_check.c")
+soong_cc(abi_check)
 
 # Install the headers, libc.a and the crt objects as the bionic sysroot
 # that the clang configuration points at:
@@ -833,9 +875,9 @@ install(FILES "${GEN}/crtbegin_static.o" "${GEN}/crtbegin_dynamic.o"
 # Static test programs: bionic's startup, then main().
 function(static_test name)
 	add_executable(${name} ${name}.c)
+	soong_cc(${name} TEST STATIC)
 	add_dependencies(${name} crt)
-	target_link_options(${name} PRIVATE -static -nostdlib -fuse-ld=lld
-	    -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+	target_link_options(${name} PRIVATE "${GEN}/crtbegin_static.o")
 	target_link_libraries(${name} PRIVATE c_static "${GEN}/crtend.o")
 	set_target_properties(${name} PROPERTIES
 	    LINK_DEPENDS "${GEN}/crtbegin_static.o")
@@ -851,10 +893,9 @@ static_test(signal_test)
 # A dynamic program: PT_INTERP /system/bin/linker64, DT_NEEDED libc.so.
 function(dynamic_test name src)
 	add_executable(${name} ${src})
+	soong_cc(${name} TEST)
 	add_dependencies(${name} crt)
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld -pie
-	    -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--gc-sections
-	    "${GEN}/crtbegin_dynamic.o")
+	target_link_options(${name} PRIVATE "${GEN}/crtbegin_dynamic.o")
 	target_link_libraries(${name} PRIVATE c_shared "${GEN}/crtend.o")
 	set_target_properties(${name} PROPERTIES SKIP_BUILD_RPATH ON
 	    LINK_DEPENDS "${GEN}/crtbegin_dynamic.o")
@@ -867,18 +908,20 @@ dynamic_test(thread_test_dynamic thread_test.c)
 
 # The runtime APEX layout, for a chroot or a jail:
 #   <build>/android-root/system/bin/hello_dynamic
+# Each file is stripped as Soong installs it; libc and linker64 have the
+# keep_symbols defaults.
 add_custom_target(android_root ALL
     COMMAND "${CMAKE_COMMAND}" -E make_directory
         android-root/apex/com.android.runtime/bin
         android-root/apex/com.android.runtime/lib64/bionic
         android-root/system/bin android-root/system/lib64
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:linker64>
+    COMMAND ${SOONG_STRIP} -k $<TARGET_FILE:linker64>
         android-root/apex/com.android.runtime/bin/linker64
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:c_shared>
+    COMMAND ${SOONG_STRIP} -k $<TARGET_FILE:c_shared>
         android-root/apex/com.android.runtime/lib64/bionic/libc.so
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:dl_shared>
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:dl_shared>
         android-root/apex/com.android.runtime/lib64/bionic/libdl.so
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:dl_android>
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:dl_android>
         android-root/apex/com.android.runtime/lib64/bionic/libdl_android.so
     COMMAND "${CMAKE_COMMAND}" -E create_symlink
         /apex/com.android.runtime/bin/linker64 android-root/system/bin/linker64
@@ -891,7 +934,7 @@ add_custom_target(android_root ALL
     COMMAND "${CMAKE_COMMAND}" -E create_symlink
         /apex/com.android.runtime/lib64/bionic/libdl_android.so
         android-root/system/lib64/libdl_android.so
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:hello_dynamic>
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:hello_dynamic>
         android-root/system/bin/hello_dynamic
     DEPENDS linker64 c_shared dl_shared dl_android hello_dynamic
     WORKING_DIRECTORY "${GEN}" VERBATIM)
@@ -966,3 +1009,7 @@ if(EXISTS "${AOSP_EXTERNAL}/googletest/googletest/src/gtest-all.cc")
 	include(selinux.cmake)
 	include(toybox.cmake)
 endif()
+
+# The flags that come after the module flags of each target, in the order
+# of Soong.
+soong_finalize()

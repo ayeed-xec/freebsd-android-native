@@ -43,27 +43,30 @@ set(GTEST "${AOSP_EXTERNAL}/googletest/googletest")
 set(GTEST_ISOLATED "${AOSP_SYSTEM}/testing/gtest_extras/gtest_isolated")
 set(BIONIC_TESTS "${BIONIC_SRC}/tests")
 
+# libgtest_defaults and libgtest.
 aosp_library(gtest
     SRCS "${GTEST}/src/gtest-all.cc"
-    FLAGS -std=gnu++20 -Wno-unused-private-field
+    FLAGS -Wall -Werror -Wno-unused-private-field
         # GTEST_CAN_STREAM_RESULTS_ is 0: that removes getaddrinfo,
         # freeaddrinfo and gai_strerror.  -D does not work: gtest-port.h
         # sets the macro for FreeBSD.
         -include "${CMAKE_CURRENT_SOURCE_DIR}/gtest_no_stream_results.h"
-    INCLUDES "${GTEST}" "${GTEST}/include")
+    INCLUDES "${GTEST}" "${GTEST}/include"
+    SOONG EXTERNAL RTTI)
 aosp_library(gtest_isolated
     SRCS "${GTEST_ISOLATED}/Color.cpp" "${GTEST_ISOLATED}/Isolate.cpp"
         "${GTEST_ISOLATED}/IsolateMain.cpp" "${GTEST_ISOLATED}/NanoTime.cpp"
         "${GTEST_ISOLATED}/Options.cpp" "${GTEST_ISOLATED}/Test.cpp"
-    FLAGS -std=gnu++20 -Wall -Werror
+    FLAGS -Wall -Werror -Wextra -Wconversion
         # Isolate.cpp only gets <sys/wait.h> through googletest's Linux
         # branch.
         -include sys/wait.h
     INCLUDES "${GTEST_ISOLATED}/include" "${GTEST}/include"
         "${LIBLOG}/include")
 
-# Just enough libm for the tests: the arm-optimized-routines math that
-# libarm-optimized-routines-math builds, nan() and nextafter().
+# Just enough libm for the tests: nan() and nextafter() with the flags of
+# libm_defaults, and the arm-optimized-routines math of aor_math
+# (android-root.cmake), which libm has in it.
 set(AOR_MATH "${AOSP_EXTERNAL}/arm-optimized-routines/math")
 set(AOR_MATH_SRCS cosf exp exp2 exp2f exp2f_data exp_data expf log log2
     log2_data log2f log2f_data log_data logf logf_data math_err math_errf
@@ -74,20 +77,20 @@ set(MSUN_SRCS s_nan s_nextafter)
 list(TRANSFORM MSUN_SRCS PREPEND
     "${BIONIC_SRC}/libm/upstream-freebsd/lib/msun/src/")
 list(TRANSFORM MSUN_SRCS APPEND ".c")
-add_library(m_static STATIC ${AOR_MATH_SRCS} ${MSUN_SRCS})
-set_source_files_properties(${MSUN_SRCS} PROPERTIES
-    COMPILE_OPTIONS "-include;freebsd-compat.h;-fno-builtin")
+add_library(m_static STATIC ${MSUN_SRCS} $<TARGET_OBJECTS:aor_math>)
+soong_cc(m_static LTO_NEVER)
 set_target_properties(m_static PROPERTIES OUTPUT_NAME m)
-target_include_directories(m_static PRIVATE "${AOR_MATH}/include"
-    "${BIONIC_SRC}/libm" "${BIONIC_SRC}/libm/upstream-freebsd/android/include"
+target_include_directories(m_static PRIVATE "${BIONIC_SRC}/libm"
+    "${BIONIC_SRC}/libm/upstream-freebsd/android/include"
     "${BIONIC_SRC}/libm/upstream-freebsd/lib/msun/src" "${LIBC}")
-target_compile_options(m_static PRIVATE -Wno-undef -Wno-unused-parameter -O2
-    -ffp-contract=fast -fno-math-errno -D__BIONIC_LP32_USE_LONG_DOUBLE
-    -DFLT_EVAL_METHOD=0 -DWANT_ERRNO=0 -DWANT_VMATH=0 -DWANT_SIMD_TESTS=0
-    -DWANT_EXP10_TESTS=0 -DWANT_MOPS=1 -DHAVE_FAST_FMA=1)
+set(LIBM_CFLAGS -include freebsd-compat.h -fno-builtin -fno-math-errno -Wall
+    -Werror -Wno-missing-braces -Wno-parentheses -Wno-sign-compare
+    -Wno-static-in-inline -Wno-unknown-pragmas -Wno-unused-const-variable
+    -Wno-unused-variable)
+target_compile_options(m_static PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${LIBM_CFLAGS}>")
 
-set(BIONIC_TEST_SRCS gtest_globals.cpp gtest_main.cpp utils.cpp
-    buffer_tests.cpp stack_protector_test_helper.cpp elftls_test.cpp
+set(BIONIC_TEST_SRCS utils.cpp buffer_tests.cpp stack_protector_test_helper.cpp elftls_test.cpp
     fdsan_test.cpp malloc_test.cpp pthread_test.cpp semaphore_test.cpp
     ifaddrs_test.cpp netdb_test.cpp net_if_test.cpp resolv_test.cpp
     setjmp_test.cpp signal_test.cpp stdio_test.cpp string_test.cpp
@@ -104,34 +107,41 @@ list(TRANSFORM BIONIC_TEST_SRCS PREPEND "${BIONIC_TESTS}/")
 set(BIONIC_LOADER_TEST_SRCS dlext_test.cpp dlfcn_symlink_support.cpp
     dlfcn_test.cpp elftls_dl_test.cpp link_test.cpp)
 list(TRANSFORM BIONIC_LOADER_TEST_SRCS PREPEND "${BIONIC_TESTS}/")
+# The sources of the two suites themselves.
+set(BIONIC_TEST_MAIN_SRCS gtest_globals.cpp gtest_main.cpp)
+list(TRANSFORM BIONIC_TEST_MAIN_SRCS PREPEND "${BIONIC_TESTS}/")
 
 # Both suites link the same objects.  The loader tests are in the dynamic
-# suite only.
+# suite only.  libBionicStandardTests and libBionicElfTlsTests have the
+# same flags, so one group holds both; so do libBionicLoaderTests and
+# libBionicElfTlsLoaderTests.  The suites have gtest: false, so their own
+# sources are a group without the gtest defines.
 add_library(bionic_test_objs OBJECT ${BIONIC_TEST_SRCS})
+soong_cc(bionic_test_objs TEST GTEST)
 add_library(bionic_loader_test_objs OBJECT ${BIONIC_LOADER_TEST_SRCS})
+soong_cc(bionic_loader_test_objs TEST GTEST)
 target_include_directories(bionic_loader_test_objs PRIVATE
     "${BIONIC_TESTS}/libs" "${ZIPARCHIVE}/include"
     "${AOSP_SYSTEM}/libprocinfo/include")
-# dlfcn_test and link_test test "#if __arm__".
-target_compile_options(bionic_loader_test_objs PRIVATE -Wno-undef)
-foreach(objs bionic_test_objs bionic_loader_test_objs)
-	target_include_directories(${objs} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+add_library(bionic_test_main_objs OBJECT ${BIONIC_TEST_MAIN_SRCS})
+soong_cc(bionic_test_main_objs TEST)
+# bionic_tests_defaults with its arm64 cflags.
+set(BIONIC_TESTS_CFLAGS -fstack-protector-all -g -Wall -Wextra -Wunused
+    -Werror -fno-builtin -Wno-deprecated-declarations -Wno-invalid-offsetof
+    -Wno-reorder-init-list -fsanitize=shadow-call-stack)
+foreach(objs bionic_test_objs bionic_loader_test_objs bionic_test_main_objs)
+	soong_system_includes(${objs} "${CXX_INCLUDE}")
 	target_include_directories(${objs} PRIVATE "${LIBC}"
 	    "${LIBC}/platform" "${LIBC}/system_properties/include"
 	    "${PROPINFO}/include" "${BIONIC_TESTS}" "${GTEST}/include"
 	    "${GTEST_ISOLATED}/include" "${LIBBASE}/include"
 	    "${LIBLOG}/include" "${AOSP_SYSTEM}/core/libcutils/include"
 	    "${TINYXML2}")
-	# -Wextra goes first so AOSP's -Wno-* flags still win.  clang 22
-	# warns about function type casts where AOSP's clang does not.
-	# mode_t is 16 bits on FreeBSD, so st_mode & 0777 promotes to int
-	# and trips -Wsign-compare against the tests' unsigned constants.
-	target_compile_options(${objs} PRIVATE -std=gnu++20
-	    -Wextra ${AOSP_CXX_FLAGS} -fstack-protector-all -Wunused
-	    -fno-builtin -Wno-deprecated-declarations -Wno-invalid-offsetof
-	    -Wno-reorder-init-list -Wno-cast-function-type-mismatch
-	    -Wno-sign-compare -fsanitize=shadow-call-stack)
+	# -Wextra turns -Wsign-compare on again.  mode_t is 16 bits on
+	# FreeBSD, so st_mode & 0777 promotes to int and trips it against
+	# the tests' unsigned constants.
+	target_compile_options(${objs} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${BIONIC_TESTS_CFLAGS};-Wno-sign-compare>")
 endforeach()
 set(LIBCXX_STATIC "${BIONIC_SYSROOT}/usr/lib/libc++.a"
     "${BIONIC_SYSROOT}/usr/lib/libc++abi.a")
@@ -153,27 +163,24 @@ function(bionic_test_lib name)
 		set(L_SONAME ${name}.so)
 	endif()
 	add_library(${name} SHARED ${L_SRCS})
+	if(L_UNDEFINED)
+		soong_cc(${name} TEST ALLOW_UNDEFINED)
+	else()
+		soong_cc(${name} TEST)
+	endif()
 	add_dependencies(${name} crt)
 	set_target_properties(${name} PROPERTIES PREFIX "" NO_SONAME ON
 	    SKIP_BUILD_RPATH ON LIBRARY_OUTPUT_DIRECTORY "${TESTLIB_DIR}/${L_DIR}"
 	    LINK_DEPENDS "${GEN}/crtbegin_so.o")
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
-	target_compile_options(${name} PRIVATE -std=gnu++20 -Wall -Werror
-	    ${AOSP_CXX_FLAGS} ${L_FLAGS})
-	if(NOT L_UNDEFINED)
-		target_link_options(${name} PRIVATE -Wl,--no-undefined)
-	endif()
+	soong_system_includes(${name} "${CXX_INCLUDE}")
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror;${L_FLAGS}>")
 	if(L_MAP)
 		target_link_options(${name} PRIVATE
 		    "-Wl,--version-script=${TESTLIB_SRC}/${L_MAP}")
 	endif()
-	# arm64 Android ELFs have 16 KiB alignment; the lld default is 64 KiB.
-	# The dlext tests load three of these libraries into one 1 MiB
-	# reservation.
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld
-	    "-Wl,-soname,${L_SONAME}" "-Wl,-rpath,\$ORIGIN"
-	    -Wl,--enable-new-dtags -Wl,-z,max-page-size=16384 ${L_LDFLAGS}
+	target_link_options(${name} PRIVATE "-Wl,-soname,${L_SONAME}"
+	    "-Wl,-rpath,\$ORIGIN" -Wl,--enable-new-dtags ${L_LDFLAGS}
 	    "${GEN}/crtbegin_so.o")
 	target_link_libraries(${name} PRIVATE ${L_LIBS} ${LIBCXX_STATIC}
 	    c_shared dl_shared "${GEN}/crtend_so.o")
@@ -332,14 +339,14 @@ bionic_test_lib(libtest_elftls_tprel SRCS elftls_tprel.cpp)
 # elftls_test uses, as Android does.
 foreach(name elftls_shared_var elftls_tprel)
 	add_library(libtest_${name}_static STATIC "${TESTLIB_SRC}/${name}.cpp")
-	target_include_directories(libtest_${name}_static SYSTEM BEFORE
-	    PRIVATE "${CXX_INCLUDE}")
-	target_compile_options(libtest_${name}_static PRIVATE -std=gnu++20
-	    -Wall -Werror ${AOSP_CXX_FLAGS})
+	soong_cc(libtest_${name}_static TEST)
+	soong_system_includes(libtest_${name}_static "${CXX_INCLUDE}")
+	target_compile_options(libtest_${name}_static PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror>")
 endforeach()
 # Android links device code with -z now, so libtest_empty.so has DT_FLAGS.
 # gen_invalid_elf makes the textrels files from that entry.
-bionic_test_lib(libtest_empty SRCS empty.cpp LDFLAGS -Wl,-z,now)
+bionic_test_lib(libtest_empty SRCS empty.cpp)
 bionic_test_lib(libtest_ifunc SRCS dlopen_testlib_ifunc.cpp)
 bionic_test_lib(libtest_ifunc_variable SRCS dlopen_testlib_ifunc_variable.cpp
     LIBS libtest_ifunc_variable_impl)
@@ -423,23 +430,24 @@ bionic_test_lib(libtestshared DIR inaccessible_libs SRCS empty.cpp)
 # The zips that the dlext tests open libraries from.  Android stores the
 # files with soong_zip -L 0, and bionic_tests_zipalign then puts the data
 # of each entry at a 16 KiB boundary, so that linker64 can map it.  Here
-# bsdtar(1) stores the files, and the zipalign tool is a static bionic
-# program.
+# bsdtar(1) stores the files, and the zipalign tool, a host program in
+# Android, is a static bionic program with the device flags.  zip_writer.cc is a source of the
+# libziparchive module, which linker64's ziparchive leaves out.
 aosp_library(ziparchive_writer
     SRCS "${ZIPARCHIVE}/zip_writer.cc"
-    FLAGS -std=gnu++20 -DZLIB_CONST -Wno-missing-field-initializers
-    INCLUDES "${ZIPARCHIVE}/include" "${LIBBASE}/include" "${LIBLOG}/include"
-        "${ZLIB}" "${GTEST}/include")
+    FLAGS ${ZIPARCHIVE_CFLAGS} -DINCFS_SUPPORT_DISABLED=1
+    CPPFLAGS ${ZIPARCHIVE_CPPFLAGS}
+    INCLUDES "${ZIPARCHIVE}/include" "${ZIPARCHIVE}/incfs_support/include"
+        "${LIBBASE}/include" "${LIBLOG}/include" "${ZLIB}" "${GTEST}/include")
 add_executable(bionic_tests_zipalign "${TESTLIB_SRC}/bionic_tests_zipalign.cpp")
+soong_cc(bionic_tests_zipalign STATIC)
 add_dependencies(bionic_tests_zipalign crt)
-target_include_directories(bionic_tests_zipalign SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
+soong_system_includes(bionic_tests_zipalign "${CXX_INCLUDE}")
 target_include_directories(bionic_tests_zipalign PRIVATE
     "${ZIPARCHIVE}/include" "${LIBBASE}/include" "${GTEST}/include")
-target_compile_options(bionic_tests_zipalign PRIVATE -std=gnu++20 -Wall
-    -Werror ${AOSP_CXX_FLAGS} -DZIPARCHIVE_DISABLE_CALLBACK_API=0)
-target_link_options(bionic_tests_zipalign PRIVATE -static -nostdlib
-    -fuse-ld=lld -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+target_compile_options(bionic_tests_zipalign PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror>")
+target_link_options(bionic_tests_zipalign PRIVATE "${GEN}/crtbegin_static.o")
 target_link_libraries(bionic_tests_zipalign PRIVATE -Wl,--start-group
     ziparchive_writer ziparchive z base log ${LIBCXX_STATIC} -Wl,--end-group
     c_static "${GEN}/crtend.o")
@@ -497,17 +505,18 @@ if(NOT EXISTS "${LIBELFUTILS}/tools/gen_invalid_elf.cpp")
 	message(FATAL_ERROR "${LIBELFUTILS} is missing; run aosp/fetch.sh "
 	    "--project platform/system/memory/libmeminfo:libelfutils")
 endif()
+# elf-file.cpp is a source of libelfutils, which has the same flags as
+# gen_invalid_elf.
 add_executable(gen_invalid_elf "${LIBELFUTILS}/tools/gen_invalid_elf.cpp"
     "${LIBELFUTILS}/elf-file.cpp")
+soong_cc(gen_invalid_elf STATIC)
 add_dependencies(gen_invalid_elf crt)
-target_include_directories(gen_invalid_elf SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
+soong_system_includes(gen_invalid_elf "${CXX_INCLUDE}")
 target_include_directories(gen_invalid_elf PRIVATE "${LIBELFUTILS}/include"
     "${LIBBASE}/include")
-target_compile_options(gen_invalid_elf PRIVATE -std=gnu++20 -Wall -Werror
-    ${AOSP_CXX_FLAGS})
-target_link_options(gen_invalid_elf PRIVATE -static -nostdlib -fuse-ld=lld
-    -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+target_compile_options(gen_invalid_elf PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror>")
+target_link_options(gen_invalid_elf PRIVATE "${GEN}/crtbegin_static.o")
 target_link_libraries(gen_invalid_elf PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
 set_target_properties(gen_invalid_elf PROPERTIES
@@ -540,17 +549,16 @@ add_custom_target(bionic_invalid_elfs ALL DEPENDS ${invalid_elfs})
 function(bionic_test_helper name)
 	cmake_parse_arguments(H "" "" "INCLUDES;LIBS;LDFLAGS" ${ARGN})
 	add_executable(${name} "${TESTLIB_SRC}/${name}.cpp")
+	soong_cc(${name} TEST)
 	add_dependencies(${name} crt)
 	set_target_properties(${name} PROPERTIES SKIP_BUILD_RPATH ON
 	    RUNTIME_OUTPUT_DIRECTORY "${TESTLIB_DIR}"
 	    LINK_DEPENDS "${GEN}/crtbegin_dynamic.o")
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_system_includes(${name} "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE ${H_INCLUDES})
-	target_compile_options(${name} PRIVATE -std=gnu++20 -Wall -Werror
-	    ${AOSP_CXX_FLAGS})
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld -pie
-	    -Wl,--dynamic-linker=/system/bin/linker64 "-Wl,-rpath,\$ORIGIN"
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror>")
+	target_link_options(${name} PRIVATE "-Wl,-rpath,\$ORIGIN"
 	    -Wl,--enable-new-dtags ${H_LDFLAGS} "${GEN}/crtbegin_dynamic.o")
 	target_link_libraries(${name} PRIVATE ${H_LIBS} ${LIBCXX_STATIC}
 	    c_shared dl_shared "${GEN}/crtend.o")
@@ -567,10 +575,12 @@ bionic_test_helper(ns_hidden_child_helper INCLUDES "${LIBC}" LIBS
     libns_hidden_child_internal libns_hidden_child_global dl_android
     LDFLAGS "-Wl,-rpath,\$ORIGIN/..")
 
-add_executable(bionic-unit-tests-static $<TARGET_OBJECTS:bionic_test_objs>)
+add_executable(bionic-unit-tests-static $<TARGET_OBJECTS:bionic_test_objs>
+    $<TARGET_OBJECTS:bionic_test_main_objs>)
+soong_cc(bionic-unit-tests-static TEST STATIC LTO_NEVER)
 add_dependencies(bionic-unit-tests-static crt)
-target_link_options(bionic-unit-tests-static PRIVATE -static -nostdlib
-    -fuse-ld=lld -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+target_link_options(bionic-unit-tests-static PRIVATE
+    "${GEN}/crtbegin_static.o")
 target_link_libraries(bionic-unit-tests-static PRIVATE ${BIONIC_TEST_LIBS}
     libtest_elftls_shared_var_static libtest_elftls_tprel_static c_static
     "${GEN}/crtend.o")
@@ -580,12 +590,13 @@ set_target_properties(bionic-unit-tests-static PROPERTIES
 # As in bionic_unit_tests_defaults: PIE, --export-dynamic, libc++ static,
 # DT_RUNPATH $ORIGIN/bionic-loader-test-libs.
 add_executable(bionic-unit-tests $<TARGET_OBJECTS:bionic_test_objs>
-    $<TARGET_OBJECTS:bionic_loader_test_objs>)
+    $<TARGET_OBJECTS:bionic_loader_test_objs>
+    $<TARGET_OBJECTS:bionic_test_main_objs>)
+soong_cc(bionic-unit-tests TEST)
 add_dependencies(bionic-unit-tests crt)
-target_link_options(bionic-unit-tests PRIVATE -nostdlib -fuse-ld=lld -pie
-    -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--export-dynamic
-    -Wl,--gc-sections "-Wl,-rpath,\$ORIGIN/bionic-loader-test-libs"
-    -Wl,--enable-new-dtags "${GEN}/crtbegin_dynamic.o")
+target_link_options(bionic-unit-tests PRIVATE -Wl,--export-dynamic
+    "-Wl,-rpath,\$ORIGIN/bionic-loader-test-libs" -Wl,--enable-new-dtags
+    "${GEN}/crtbegin_dynamic.o")
 target_link_libraries(bionic-unit-tests PRIVATE ziparchive z
     ${BIONIC_TEST_LIBS} c_shared ld_android dl_shared dl_android
     libdl_test_df_1_global
@@ -611,21 +622,22 @@ aosp_library(propertyinfoserializer
         "${PROPSVC}/libpropertyinfoserializer/property_info_serializer.cpp"
         "${PROPSVC}/libpropertyinfoserializer/trie_builder.cpp"
         "${PROPSVC}/libpropertyinfoserializer/trie_serializer.cpp"
-    FLAGS -std=gnu++20 -Wall -Wextra -Werror
+    CPPFLAGS -Wall -Wextra -Werror
     INCLUDES "${PROPSVC}/libpropertyinfoserializer/include"
         "${PROPINFO}/include" "${LIBBASE}/include")
+# The project's own programs from here on.
+set(PROJECT_CFLAGS -Wall -Wextra -Werror)
 set(PROPD "${PROJECT_ROOT}/aosp/jail/propd")
 add_executable(propd "${PROPD}/propd.cpp")
+soong_cc(propd STATIC)
 add_dependencies(propd crt)
-target_include_directories(propd SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
+soong_system_includes(propd "${CXX_INCLUDE}")
 target_include_directories(propd PRIVATE
     "${PROPSVC}/libpropertyinfoserializer/include" "${LIBBASE}/include"
     "${AOSP_SYSTEM}/core/libcutils/include")
-target_compile_options(propd PRIVATE -std=gnu++20 -Wall -Wextra
-    -Werror ${AOSP_CXX_FLAGS})
-target_link_options(propd PRIVATE -static -nostdlib -fuse-ld=lld
-    -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+target_compile_options(propd PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${PROJECT_CFLAGS}>")
+target_link_options(propd PRIVATE "${GEN}/crtbegin_static.o")
 target_link_libraries(propd PRIVATE -Wl,--start-group
     propertyinfoserializer base log ${LIBCXX_STATIC} -Wl,--end-group
     c_static "${GEN}/crtend.o")
@@ -642,13 +654,12 @@ configure_file("${PROPD}/property_contexts" "${JAIL_BIN}/property_contexts"
 # the same time.
 add_executable(propwait_test
     "${PROJECT_ROOT}/aosp/jail/propwait_test/propwait_test.cpp")
+soong_cc(propwait_test TEST STATIC)
 add_dependencies(propwait_test crt)
-target_include_directories(propwait_test SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
-target_compile_options(propwait_test PRIVATE -std=gnu++20 -Wall -Wextra
-    -Werror ${AOSP_CXX_FLAGS})
-target_link_options(propwait_test PRIVATE -static -nostdlib -fuse-ld=lld
-    -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+soong_system_includes(propwait_test "${CXX_INCLUDE}")
+target_compile_options(propwait_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${PROJECT_CFLAGS}>")
+target_link_options(propwait_test PRIVATE "${GEN}/crtbegin_static.o")
 target_link_libraries(propwait_test PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
 set_target_properties(propwait_test PROPERTIES
@@ -662,13 +673,12 @@ endif()
 # variables and rwlocks.
 add_executable(pthread_stress
     "${PROJECT_ROOT}/aosp/jail/pthread_stress/pthread_stress.cpp")
+soong_cc(pthread_stress TEST STATIC)
 add_dependencies(pthread_stress crt)
-target_include_directories(pthread_stress SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
-target_compile_options(pthread_stress PRIVATE -std=gnu++20 -Wall -Wextra
-    -Werror ${AOSP_CXX_FLAGS})
-target_link_options(pthread_stress PRIVATE -static -nostdlib -fuse-ld=lld
-    -Wl,--gc-sections "${GEN}/crtbegin_static.o")
+soong_system_includes(pthread_stress "${CXX_INCLUDE}")
+target_compile_options(pthread_stress PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${PROJECT_CFLAGS}>")
+target_link_options(pthread_stress PRIVATE "${GEN}/crtbegin_static.o")
 target_link_libraries(pthread_stress PRIVATE ${LIBCXX_STATIC} c_static
     "${GEN}/crtend.o")
 set_target_properties(pthread_stress PROPERTIES

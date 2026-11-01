@@ -107,27 +107,34 @@ set(LIBM_SRCS "${MSUN}/bsdsrc/b_tgamma" ${LIBM_MSUN_SRCS} ${LIBM_LD128_SRCS}
     ${LIBM_NETBSD_SRCS} "${LIBM}/significandl" "${LIBM}/fake_long_double"
     "${LIBM}/fenv-arm64")
 list(TRANSFORM LIBM_SRCS APPEND ".c")
+# arm-optimized-routines-defaults and libarm-optimized-routines-math.
+# Soong puts the module directory on the include path, where the header of
+# --include is.
 add_library(aor_math OBJECT ${AOR_MATH_SRCS})
-target_include_directories(aor_math PRIVATE "${AOR_MATH}/include")
-target_compile_options(aor_math PRIVATE -Wno-undef -Wno-unused-parameter -O2
-    -ffp-contract=fast -fno-math-errno -D__BIONIC_LP32_USE_LONG_DOUBLE
-    -DFLT_EVAL_METHOD=0 -DWANT_ERRNO=0 -DWANT_VMATH=0 -DWANT_SIMD_TESTS=0
-    -DWANT_EXP10_TESTS=0 -DWANT_MOPS=1 -DHAVE_FAST_FMA=1)
+soong_cc(aor_math EXTERNAL)
+target_include_directories(aor_math PRIVATE "${AOR_MATH}/include"
+    "${AOR_MATH}/..")
+target_compile_options(aor_math PRIVATE -Werror -Wno-unused-parameter -O2
+    -ffp-contract=fast -fno-math-errno
+    --include=native_bridge_support/weak_for_native_bridge.h
+    -D__BIONIC_LP32_USE_LONG_DOUBLE -DFLT_EVAL_METHOD=0 -DWANT_ERRNO=0
+    -DWANT_VMATH=0 -DWANT_SIMD_TESTS=0 -DWANT_EXP10_TESTS=0 -DWANT_MOPS=1
+    -DHAVE_FAST_FMA=1)
+# libm_defaults and libm.
 add_library(m_shared SHARED ${LIBM_SRCS} "${LIBM}/builtins.cpp"
     "${LIBM}/signbit.cpp" $<TARGET_OBJECTS:aor_math>)
+soong_cc(m_shared LTO_NEVER)
 add_dependencies(m_shared crt)
 set_target_properties(m_shared PROPERTIES OUTPUT_NAME m SKIP_BUILD_RPATH ON
     LINK_DEPENDS "${GEN}/crtbegin_so.o")
 target_include_directories(m_shared PRIVATE
     "${LIBM}/upstream-freebsd/android/include" "${MSUN}/src" "${MSUN}/ld128"
     "${LIBM}" "${LIBC}")
-# -Wno-undef: the -Wundef of our clang configuration, which AOSP's clang
-# does not have.
 target_compile_options(m_shared PRIVATE -include freebsd-compat.h
-    -fno-builtin -fno-math-errno -Wno-missing-braces -Wno-parentheses
-    -Wno-sign-compare -Wno-static-in-inline -Wno-unknown-pragmas
-    -Wno-unused-const-variable -Wno-unused-variable -Wno-undef)
-target_link_options(m_shared PRIVATE ${SO_LINK_OPTIONS} -Wl,-soname,libm.so
+    -fno-builtin -fno-math-errno -Wall -Werror -Wno-missing-braces
+    -Wno-parentheses -Wno-sign-compare -Wno-static-in-inline
+    -Wno-unknown-pragmas -Wno-unused-const-variable -Wno-unused-variable)
+target_link_options(m_shared PRIVATE -Wl,-soname,libm.so
     -Wl,--Bsymbolic-functions "${GEN}/crtbegin_so.o")
 target_link_libraries(m_shared PRIVATE c_shared "${GEN}/crtend_so.o")
 if(BUILTINS_LIB)
@@ -135,15 +142,16 @@ if(BUILTINS_LIB)
 endif()
 
 # A program of the system partition: PIE, PT_INTERP /system/bin/linker64.
+#   system_program(<name> SRCS <src>... [LIBS <lib>...]
+#       [SOONG <soong_cc options>...])
 function(system_program name)
-	cmake_parse_arguments(P "" "" "SRCS;LIBS" ${ARGN})
+	cmake_parse_arguments(P "" "" "SRCS;LIBS;SOONG" ${ARGN})
 	add_executable(${name} ${P_SRCS})
+	soong_cc(${name} ${P_SOONG})
 	add_dependencies(${name} crt)
 	set_target_properties(${name} PROPERTIES SKIP_BUILD_RPATH ON
 	    LINK_DEPENDS "${GEN}/crtbegin_dynamic.o")
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld -pie
-	    -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--gc-sections
-	    "${GEN}/crtbegin_dynamic.o")
+	target_link_options(${name} PRIVATE "${GEN}/crtbegin_dynamic.o")
 	target_link_libraries(${name} PRIVATE ${P_LIBS} c_shared m_shared
 	    dl_shared "${GEN}/crtend.o")
 	if(BUILTINS_LIB)
@@ -152,14 +160,17 @@ function(system_program name)
 endfunction()
 
 # A shared library of the system partition, linked as Soong links one.
+#   system_library(<name> SONAME <soname> [MAP <version script>]
+#       SRCS <src>... [LIBS <lib>...] [SOONG <soong_cc options>...])
 function(system_library name)
-	cmake_parse_arguments(L "" "SONAME;MAP" "SRCS;LIBS" ${ARGN})
+	cmake_parse_arguments(L "" "SONAME;MAP" "SRCS;LIBS;SOONG" ${ARGN})
 	add_library(${name} SHARED ${L_SRCS})
+	soong_cc(${name} ${L_SOONG})
 	add_dependencies(${name} crt)
 	set_target_properties(${name} PROPERTIES PREFIX "" NO_SONAME ON
 	    SKIP_BUILD_RPATH ON LINK_DEPENDS "${GEN}/crtbegin_so.o")
-	target_link_options(${name} PRIVATE ${SO_LINK_OPTIONS}
-	    "-Wl,-soname,${L_SONAME}" "${GEN}/crtbegin_so.o")
+	target_link_options(${name} PRIVATE "-Wl,-soname,${L_SONAME}"
+	    "${GEN}/crtbegin_so.o")
 	if(L_MAP)
 		target_link_options(${name} PRIVATE
 		    "-Wl,--version-script=${L_MAP}")
@@ -178,7 +189,7 @@ set(MKSH_SRCS lalloc edit eval exec expr funcs histrap jobs lex main misc
     shf syn tree ulimit var)
 list(TRANSFORM MKSH_SRCS PREPEND "${MKSH}/src/")
 list(TRANSFORM MKSH_SRCS APPEND ".c")
-system_program(mksh SRCS ${MKSH_SRCS})
+system_program(mksh SRCS ${MKSH_SRCS} SOONG EXTERNAL)
 target_include_directories(mksh PRIVATE "${MKSH}/src")
 target_compile_options(mksh PRIVATE -Wall -Werror
     -Wno-deprecated-declarations -fno-asynchronous-unwind-tables
@@ -224,21 +235,20 @@ set(LIBLOG_SRCS log_event_list.cpp log_event_write.cpp logger_name.cpp
     logd_reader.cpp logd_writer.cpp)
 list(TRANSFORM LIBLOG_SRCS PREPEND "${LIBLOG}/")
 system_library(log_shared SONAME liblog.so MAP "${LIBLOG}/liblog.map.txt"
-    SRCS ${LIBLOG_SRCS} LIBS ${LIBCXX_STATIC})
+    SRCS ${LIBLOG_SRCS} LIBS ${LIBCXX_STATIC} SOONG AFDO MODULE liblog)
 set_target_properties(log_shared PROPERTIES OUTPUT_NAME liblog)
-target_include_directories(log_shared SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
+soong_system_includes(log_shared "${CXX_INCLUDE}")
 target_include_directories(log_shared PRIVATE "${LIBLOG}/include"
     "${LIBBASE}/include" "${AOSP_SYSTEM}/core/libcutils/include"
     "${AOSP_SYSTEM}/core/libutils/include"
     "${AOSP_SYSTEM}/core/libsystem/include")
-target_compile_options(log_shared PRIVATE -std=gnu++20 -D_FILE_OFFSET_BITS=64
-    -DNDEBUG ${AOSP_CXX_FLAGS} -Wexit-time-destructors -DLIBLOG_LOG_TAG=1006
-    -DSNET_EVENT_LOG_TAG=1397638484 -DANDROID_DEBUGGABLE=0)
+target_compile_options(log_shared PRIVATE ${LIBLOG_CFLAGS})
 
 # libz.so: the libz module of external/zlib, from the objects of zlib.cmake.
 # It has no version script: libz.map.txt is the symbol file of the NDK stub
 # library only.
-system_library(z_shared SONAME libz.so SRCS $<TARGET_OBJECTS:zlib_objects>)
+system_library(z_shared SONAME libz.so SRCS $<TARGET_OBJECTS:zlib_objects>
+    SOONG EXTERNAL AFDO MODULE libz)
 set_target_properties(z_shared PROPERTIES OUTPUT_NAME libz)
 
 # libnativehelper.so: libnativehelper with libnativehelper_any_vm in it.
@@ -248,6 +258,8 @@ set(NATIVEHELPER_SRCS DlHelp.c ExpandableString.c JNIHelp.c JniInvocation.c
 list(TRANSFORM NATIVEHELPER_SRCS PREPEND "${NATIVEHELPER}/")
 system_library(nativehelper SONAME libnativehelper.so
     SRCS ${NATIVEHELPER_SRCS} LIBS log_shared)
+# The module's -std=c11 is in its cflags, so Soong's -std=gnu23 comes after
+# it and wins.
 set_target_properties(nativehelper PROPERTIES OUTPUT_NAME libnativehelper)
 target_include_directories(nativehelper PRIVATE
     "${NATIVEHELPER}/header_only_include" "${NATIVEHELPER}/include"
@@ -267,79 +279,87 @@ add_library(icu_androidicuinit OBJECT
     "${ICU}/libandroidicuinit/android_icu_init.cpp")
 add_library(icu_stubdata OBJECT "${ICU4C}/stubdata/stubdata.cpp")
 foreach(objs icu_androidicuinit icu_stubdata)
-	target_include_directories(${objs} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_cc(${objs} EXTERNAL)
+	soong_system_includes(${objs} "${CXX_INCLUDE}")
 	target_include_directories(${objs} PRIVATE ${ICU_INCLUDES}
 	    "${ICU}/libandroidicuinit/include" "${LIBBASE}/include"
 	    "${LIBLOG}/include")
-	target_compile_options(${objs} PRIVATE -std=gnu++20 ${AOSP_CXX_FLAGS}
-	    -DANDROID_LINK_SHARED_ICU4C)
+	target_compile_options(${objs} PRIVATE -DANDROID_LINK_SHARED_ICU4C)
 endforeach()
 # Android.bp builds "*.cpp" of icu4c/source/common.
 file(GLOB ICU_UC_SRCS "${ICU4C}/common/*.cpp")
 system_library(icuuc SONAME libicuuc.so
     SRCS ${ICU_UC_SRCS} $<TARGET_OBJECTS:icu_androidicuinit>
         $<TARGET_OBJECTS:icu_stubdata>
-    LIBS log_shared base ${LIBCXX_STATIC})
+    LIBS log_shared base ${LIBCXX_STATIC}
+    SOONG EXTERNAL RTTI)
 set_target_properties(icuuc PROPERTIES OUTPUT_NAME libicuuc)
-# icu4c_defaults, with rtti: true.
-set(ICU4C_FLAGS -std=gnu++20 ${AOSP_CXX_FLAGS} -frtti
-    -Wno-ambiguous-reversed-operator -Wno-deprecated-declarations
+# icu4c_defaults; libicuuc and libicui18n have rtti: true.
+set(ICU4C_FLAGS -Wno-ambiguous-reversed-operator -Wno-deprecated-declarations
     -Wno-unused-parameter -Wno-unused-const-variable
     -Wno-unneeded-internal-declaration -Wno-unnecessary-virtual-specifier
     -DUCONFIG_USE_ML_PHRASE_BREAKING=1 -DANDROID_LINK_SHARED_ICU4C)
-target_include_directories(icuuc SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
-target_include_directories(icuuc PRIVATE ${ICU_INCLUDES})
+soong_system_includes(icuuc "${CXX_INCLUDE}")
+# The global -DANDROID turns on AOSP_ICU_INIT in udata.cpp, which needs the
+# exported headers of libandroidicuinit.
+target_include_directories(icuuc PRIVATE ${ICU_INCLUDES}
+    "${ICU}/libandroidicuinit/include")
 target_compile_options(icuuc PRIVATE ${ICU4C_FLAGS} -D_REENTRANT
     -DU_COMMON_IMPLEMENTATION -O3 -fvisibility=hidden
-    -Wno-missing-field-initializers -Wno-sign-compare -DPIC)
+    -Wno-missing-field-initializers -Wno-sign-compare -DPIC -fPIC)
 target_link_options(icuuc PRIVATE -Wl,--exclude-libs,ALL)
 
 # libicui18n.so: libicui18n of icu4c/source/i18n/Android.bp, on top of
 # libicuuc.so.  It also links the static libc++.
 file(GLOB ICU_I18N_SRCS "${ICU4C}/i18n/*.cpp")
 system_library(icui18n SONAME libicui18n.so SRCS ${ICU_I18N_SRCS}
-    LIBS icuuc ${LIBCXX_STATIC})
+    LIBS icuuc ${LIBCXX_STATIC} SOONG EXTERNAL RTTI)
 set_target_properties(icui18n PROPERTIES OUTPUT_NAME libicui18n)
-target_include_directories(icui18n SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
+soong_system_includes(icui18n "${CXX_INCLUDE}")
 target_include_directories(icui18n PRIVATE "${ICU4C}/i18n" ${ICU_INCLUDES})
 target_compile_options(icui18n PRIVATE ${ICU4C_FLAGS} -D_REENTRANT
     -DU_I18N_IMPLEMENTATION -O3 -fvisibility=hidden
-    -Wno-unreachable-code-loop-increment -DPIC)
+    -Wno-unreachable-code-loop-increment -DPIC -fPIC)
 target_link_options(icui18n PRIVATE -Wl,--exclude-libs,ALL)
 
 # The files go in <build>/android-root next to the bionic files of the
 # android_root target.  libm.so is a bootstrap library of the runtime APEX,
-# as libc.so is, so /system/lib64 links to it.
+# as libc.so is, so /system/lib64 links to it.  Each program and library
+# is stripped as Soong installs it.
 set(ROOT "${GEN}/android-root")
 set(RUNTIME_LIB "/apex/com.android.runtime/lib64/bionic")
 add_custom_target(android_root_platform ALL
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${ROOT}${RUNTIME_LIB}"
         "${ROOT}/apex/com.android.i18n/lib64" "${ROOT}/system/bin"
         "${ROOT}/system/etc" "${ROOT}/system/lib64"
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:m_shared>
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:m_shared>
         "${ROOT}${RUNTIME_LIB}/libm.so"
     COMMAND "${CMAKE_COMMAND}" -E create_symlink "${RUNTIME_LIB}/libm.so"
         "${ROOT}/system/lib64/libm.so"
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:icuuc>
-        $<TARGET_FILE:icui18n> "${ROOT}/apex/com.android.i18n/lib64"
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:mksh>
-        "${ROOT}/system/bin/sh"
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:icuuc>
+        "${ROOT}/apex/com.android.i18n/lib64/libicuuc.so"
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:icui18n>
+        "${ROOT}/apex/com.android.i18n/lib64/libicui18n.so"
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:mksh> "${ROOT}/system/bin/sh"
     COMMAND "${CMAKE_COMMAND}" -E copy "${MKSH}/mkshrc"
         "${ROOT}/system/etc/mkshrc"
     COMMAND "${CMAKE_COMMAND}" -E copy
         "${AOSP_SYSTEM}/core/rootdir/etc/hosts" "${ROOT}/system/etc/hosts"
     COMMAND "${CMAKE_COMMAND}" -E copy "${PROJECT_ROOT}/aosp/jail/build.prop"
         "${ROOT}/system/build.prop"
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:log_shared>
-        $<TARGET_FILE:nativehelper> $<TARGET_FILE:z_shared>
-        "${GEN}/libcrypto.so" $<TARGET_FILE:selinux_shared>
-        $<TARGET_FILE:pcre2_shared> $<TARGET_FILE:packagelistparser_shared>
-        "${ROOT}/system/lib64"
+    COMMAND ${SOONG_STRIP} "${GEN}/libcrypto.so"
+        "${ROOT}/system/lib64/libcrypto.so"
     DEPENDS m_shared icuuc icui18n mksh log_shared nativehelper z_shared
         "${GEN}/libcrypto.so" selinux_shared pcre2_shared
         packagelistparser_shared
         "${MKSH}/mkshrc" "${PROJECT_ROOT}/aosp/jail/build.prop"
         "${AOSP_SYSTEM}/core/rootdir/etc/hosts"
     VERBATIM)
+foreach(lib log_shared nativehelper z_shared selinux_shared pcre2_shared
+    packagelistparser_shared)
+	add_custom_command(TARGET android_root_platform POST_BUILD
+	    COMMAND ${SOONG_STRIP} $<TARGET_FILE:${lib}>
+	        "${ROOT}/system/lib64/$<TARGET_FILE_NAME:${lib}>"
+	    VERBATIM)
+endforeach()
 add_dependencies(android_root_platform android_root)

@@ -37,9 +37,9 @@
 # boringssl_crypto_test.
 #
 # The flags are boringssl_flags_common, boringssl_flags and
-# boringssl_defaults, and -DANDROID, -DNDEBUG and -fno-strict-aliasing of
-# Soong's global flags (cc/config/global.go); BoringSSL's
-# CompilerTest.NoStrictAliasing asserts the last one.  On this target
+# boringssl_defaults, after Soong's global flags; BoringSSL's
+# CompilerTest.NoStrictAliasing asserts the global -fno-strict-aliasing.
+# The assembly sources get no module flags.  On this target
 # BoringSSL takes its FreeBSD code: the CPU features from the ID registers,
 # which the kernel traps, and getentropy().  Its patch in
 # aosp/patches/boringssl makes it detect a fork with MADV_WIPEONFORK, as on
@@ -55,30 +55,36 @@ include("${BORINGSSL}/android-sources.cmake")
 set(BCM_SRC "${BORINGSSL}/src/crypto/fipsmodule/bcm.cc")
 set(LIBCRYPTO_SRCS ${crypto_sources})
 list(REMOVE_ITEM LIBCRYPTO_SRCS "${BCM_SRC}")
-set(BORINGSSL_FLAGS -DANDROID -DNDEBUG -fno-strict-aliasing
-    -fvisibility=hidden -DBORINGSSL_SHARED_LIBRARY -DOPENSSL_SMALL -Werror
-    -Wno-unused-parameter -DBORINGSSL_ANDROID_SYSTEM
-    "$<$<COMPILE_LANGUAGE:CXX>:-std=gnu++20;-Wall;${AOSP_CXX_FLAGS}>")
+set(BORINGSSL_CFLAGS -fvisibility=hidden -DBORINGSSL_SHARED_LIBRARY
+    -DOPENSSL_SMALL -Werror -Wno-unused-parameter -DBORINGSSL_ANDROID_SYSTEM)
+set(BORINGSSL_CPPFLAGS -Wall -Werror)
 
+#   boringssl_objects(<name> SRCS <src>... [FLAGS <cflags>...]
+#       [SOONG <soong_cc options>...])
 function(boringssl_objects name)
-	cmake_parse_arguments(B "" "" "SRCS;FLAGS" ${ARGN})
+	cmake_parse_arguments(B "" "" "SRCS;FLAGS;SOONG" ${ARGN})
 	add_library(${name} OBJECT ${B_SRCS})
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_cc(${name} EXTERNAL ${B_SOONG})
+	soong_system_includes(${name} "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE "${BORINGSSL}/src/include")
-	target_compile_options(${name} PRIVATE ${BORINGSSL_FLAGS}
-	    -DBORINGSSL_IMPLEMENTATION ${B_FLAGS})
+	set(cflags ${BORINGSSL_CFLAGS} -DBORINGSSL_IMPLEMENTATION ${B_FLAGS})
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${cflags}>"
+	    "$<$<COMPILE_LANGUAGE:CXX>:${BORINGSSL_CPPFLAGS}>")
 endfunction()
 
 # bcm_object.  Its flags come after the global -ffunction-sections and
-# -fdata-sections, so they win.
+# -fdata-sections, so they win.  The partial link has the toolchain link
+# flags and the linker script, as Soong links a cc_object.
 boringssl_objects(boringssl_bcm SRCS "${BCM_SRC}"
-    FLAGS -DBORINGSSL_FIPS -fPIC -fno-data-sections -fno-function-sections)
+    FLAGS -DBORINGSSL_FIPS -fPIC -fno-data-sections -fno-function-sections
+    SOONG CC_OBJECT)
 set(FIPS_LDS "${BORINGSSL}/src/crypto/fipsmodule/fips_shared.lds")
 add_custom_command(OUTPUT "${GEN}/bcm_object.o"
     COMMAND "${CMAKE_CXX_COMPILER}" "--config=${ANDROID_CLANG_CFG}"
-        -nostdlib -fuse-ld=lld -Wl,-r "-Wl,-T,${FIPS_LDS}"
-        -o "${GEN}/bcm_object.o" "$<TARGET_OBJECTS:boringssl_bcm>"
+        -fuse-ld=lld -nostdlib -no-pie -Wl,-r "$<TARGET_OBJECTS:boringssl_bcm>"
+        -o "${GEN}/bcm_object.o" ${SOONG_TOOLCHAIN_LDFLAGS}
+        "-Wl,-T,${FIPS_LDS}"
     DEPENDS "$<TARGET_OBJECTS:boringssl_bcm>" "${FIPS_LDS}"
     COMMAND_EXPAND_LISTS VERBATIM)
 set_source_files_properties("${GEN}/bcm_object.o" PROPERTIES
@@ -87,10 +93,12 @@ set_source_files_properties("${GEN}/bcm_object.o" PROPERTIES
 # libcrypto.so, linked with -Bsymbolic as on Android.  libc++ is static in
 # it and its symbols stay local.
 boringssl_objects(boringssl_crypto SRCS ${LIBCRYPTO_SRCS} ${crypto_sources_asm}
-    FLAGS -DBORINGSSL_FIPS)
+    FLAGS -DBORINGSSL_FIPS
+    SOONG AFDO MODULE libcrypto)
 system_library(crypto_shared SONAME libcrypto.so
     SRCS "${GEN}/bcm_object.o" $<TARGET_OBJECTS:boringssl_crypto>
-    LIBS ${LIBCXX_STATIC})
+    LIBS ${LIBCXX_STATIC}
+    SOONG EXTERNAL AFDO MODULE libcrypto)
 set_target_properties(crypto_shared PROPERTIES
     OUTPUT_NAME libcrypto.unhashed)
 target_link_options(crypto_shared PRIVATE -Wl,-Bsymbolic
@@ -112,20 +120,25 @@ add_custom_target(crypto_hashed ALL DEPENDS "${GEN}/libcrypto.so")
 boringssl_objects(boringssl_crypto_static
     SRCS ${crypto_sources} ${crypto_sources_asm})
 add_library(crypto_static STATIC $<TARGET_OBJECTS:boringssl_crypto_static>)
+soong_cc(crypto_static EXTERNAL)
 
 # test_fips: the FIPS state of libcrypto.so.  "Module is in FIPS mode" needs
 # the integrity check and the power-on self tests at load time.  On this
 # BoringSSL stream FIPS_version() is 0 (self_check/fips.cc.inc), so the
 # program then prints "No module version set" and aborts, as on Android.
 # The test checks both lines and the abort.
+# Android.bp makes it a cc_binary, so it is not of the test class.
 system_program(test_fips SRCS "${BORINGSSL}/src/util/fipstools/test_fips.cc"
-    LIBS crypto_shared ${LIBCXX_STATIC})
+    LIBS crypto_shared ${LIBCXX_STATIC}
+    SOONG EXTERNAL)
 add_dependencies(test_fips crypto_hashed)
 set_target_properties(test_fips PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${JAIL_BIN}")
-target_include_directories(test_fips SYSTEM BEFORE PRIVATE "${CXX_INCLUDE}")
+soong_system_includes(test_fips "${CXX_INCLUDE}")
 target_include_directories(test_fips PRIVATE "${BORINGSSL}/src/include")
-target_compile_options(test_fips PRIVATE ${BORINGSSL_FLAGS} -DBORINGSSL_FIPS)
+target_compile_options(test_fips PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${BORINGSSL_CFLAGS};-DBORINGSSL_FIPS>"
+    "$<$<COMPILE_LANGUAGE:CXX>:${BORINGSSL_CPPFLAGS}>")
 add_test(NAME test_fips COMMAND sh -c [=[
 ulimit -c 0
 out=$(sh "$0" "$1" "$2" 2>&1)
@@ -147,8 +160,9 @@ set_tests_properties(test_fips PROPERTIES SKIP_RETURN_CODE 77)
 system_test(boringssl_crypto_test
     SRCS ${crypto_test_sources} ${test_support_sources}
     LIBS crypto_static gmock
-    FLAGS ${BORINGSSL_FLAGS}
-    INCLUDES "${BORINGSSL}/src/include" "${GMOCK}/include")
+    FLAGS ${BORINGSSL_CFLAGS} "$<$<COMPILE_LANGUAGE:CXX>:${BORINGSSL_CPPFLAGS}>"
+    INCLUDES "${BORINGSSL}/src/include" "${GMOCK}/include"
+    SOONG EXTERNAL)
 set(BORINGSSL_DATA "${GEN}/boringssl-data")
 foreach(f ${crypto_test_data})
 	file(RELATIVE_PATH rel "${BORINGSSL}" "${f}")

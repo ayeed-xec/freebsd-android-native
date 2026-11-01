@@ -28,8 +28,8 @@
 # selinuxfs, so libselinux finds no SELinux mount and reports SELinux
 # disabled, as on a Linux kernel without SELinux.
 #
-# The flags are those of the Android.bp files, and -DANDROID and -DNDEBUG
-# of Soong's global flags; libselinux needs -DANDROID for its Android code.
+# The flags are those of the Android.bp files, after Soong's global flags;
+# libselinux needs the global -DANDROID for its Android code.
 
 set(SELINUX "${AOSP_EXTERNAL}/selinux/libselinux")
 set(PCRE "${AOSP_EXTERNAL}/pcre")
@@ -49,11 +49,13 @@ set(PCRE2_SRCS auto_possess chartables chkdint compile compile_class config
     xclass)
 list(TRANSFORM PCRE2_SRCS PREPEND "${PCRE}/src/pcre2_")
 list(TRANSFORM PCRE2_SRCS APPEND ".c")
-system_library(pcre2_shared SONAME libpcre2.so SRCS ${PCRE2_SRCS})
+system_library(pcre2_shared SONAME libpcre2.so SRCS ${PCRE2_SRCS}
+    SOONG EXTERNAL)
 set_target_properties(pcre2_shared PROPERTIES OUTPUT_NAME libpcre2)
 target_include_directories(pcre2_shared PRIVATE "${PCRE}/include")
-target_compile_options(pcre2_shared PRIVATE -DANDROID -DNDEBUG
-    -DHAVE_CONFIG_H -Wall -Werror -DPCRE2_CODE_UNIT_WIDTH=8)
+set(PCRE2_CFLAGS -DHAVE_CONFIG_H -Wall -Werror -DPCRE2_CODE_UNIT_WIDTH=8)
+target_compile_options(pcre2_shared PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${PCRE2_CFLAGS}>")
 
 # libpackagelistparser.so of system/core/libpackagelistparser.  logd keeps
 # its static library (logd.cmake).  libc++ is static in it and its symbols
@@ -62,21 +64,16 @@ system_library(packagelistparser_shared SONAME libpackagelistparser.so
     SRCS "${PKGLIST}/packagelistparser.cpp" LIBS log_shared ${LIBCXX_STATIC})
 set_target_properties(packagelistparser_shared PROPERTIES
     OUTPUT_NAME libpackagelistparser)
-target_include_directories(packagelistparser_shared SYSTEM BEFORE PRIVATE
-    "${CXX_INCLUDE}")
+soong_system_includes(packagelistparser_shared "${CXX_INCLUDE}")
 target_include_directories(packagelistparser_shared PRIVATE
     "${PKGLIST}/include" ${SYSTEM_INCLUDES})
-target_compile_options(packagelistparser_shared PRIVATE -std=gnu++20
-    -DANDROID -DNDEBUG ${AOSP_CXX_FLAGS})
 target_link_options(packagelistparser_shared PRIVATE
     -Wl,--exclude-libs,ALL)
 
 # libselinux.so: libselinux_defaults and the android target of
-# libselinux/Android.bp, with its version script exported.map.txt.  Soong
-# ends the flags of external/ code with -Wno-unused
-# (noOverrideExternalGlobalCflags); regex.c sets a variable that only an
-# assert() reads.  -Wno-undef stops the -Wundef of our clang configuration
-# (android_seapp.c and android_device.c test DEBUG with #if).
+# libselinux/Android.bp, with its version script exported.map.txt.  The
+# flags start with the one of libselinux_flags_defaults:
+# RELEASE_SELINUX_DATA_DATA_IGNORE is true in the release.
 set(SELINUX_SRCS android/android.c android/android_seapp.c avc.c
     avc_internal.c avc_sidtab.c booleans.c callbacks.c canonicalize_context.c
     checkAccess.c check_context.c compute_av.c compute_create.c
@@ -91,18 +88,21 @@ set(SELINUX_SRCS android/android.c android/android_seapp.c avc.c
 list(TRANSFORM SELINUX_SRCS PREPEND "${SELINUX}/src/")
 system_library(selinux_shared SONAME libselinux.so
     MAP "${SELINUX}/exported.map.txt" SRCS ${SELINUX_SRCS}
-    LIBS pcre2_shared log_shared packagelistparser_shared)
+    LIBS pcre2_shared log_shared packagelistparser_shared
+    SOONG EXTERNAL)
 set_target_properties(selinux_shared PROPERTIES OUTPUT_NAME libselinux)
 target_include_directories(selinux_shared PRIVATE "${SELINUX}/include"
     "${SELINUX}/src" "${PCRE}/include" "${PKGLIST}/include"
     "${LIBBASE}/include" "${AOSP_SYSTEM}/core/libcutils/include"
     "${LIBLOG}/include")
-target_compile_options(selinux_shared PRIVATE -DANDROID -DNDEBUG
+set(SELINUX_CFLAGS -DSELINUX_FLAGS_DATA_DATA_IGNORE
     -DNO_PERSISTENTLY_STORED_PATTERNS -DDISABLE_SETRANS -DDISABLE_BOOL
     -D_GNU_SOURCE -DNO_MEDIA_BACKEND -DNO_X_BACKEND -DNO_DB_BACKEND -Wall
     -Werror -Wno-error=missing-noreturn -Wno-error=unused-function
     -Wno-error=unused-variable -DUSE_PCRE2 -DAUDITD_LOG_TAG=1003
-    -DHAVE_STRLCPY -DHAVE_REALLOCARRAY -Wno-unused -Wno-undef)
+    -DHAVE_STRLCPY -DHAVE_REALLOCARRAY)
+target_compile_options(selinux_shared PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${SELINUX_CFLAGS}>")
 
 # libselinux_freebsd_test: the disabled state of libselinux in the jail
 # (docs/specs/libselinux.md, section 8), with a small file_contexts file

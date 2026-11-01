@@ -90,21 +90,23 @@ set(TOYBOX_SRCS ${TOYBOX_ALL_SRCS} ${TOYBOX_LINUX_SRCS} ${TOYBOX_DEVICE_SRCS})
 list(TRANSFORM TOYBOX_SRCS PREPEND "${TOYBOX}/")
 list(TRANSFORM TOYBOX_SRCS APPEND ".c")
 
-# The cflags of toybox-defaults, and -DANDROID and -DNDEBUG of Soong's global
-# flags.  stl: "none", and the shared libraries of the android target.
+# The cflags of toybox-defaults.  stl: "none", and the shared libraries of
+# the android target.
 system_program(toybox SRCS ${TOYBOX_SRCS}
-    LIBS crypto_shared log_shared selinux_shared z_shared)
+    LIBS crypto_shared log_shared selinux_shared z_shared
+    SOONG EXTERNAL)
 add_dependencies(toybox crypto_hashed)
 target_include_directories(toybox PRIVATE "${TOYBOX}/android/device"
     "${TOYBOX}" "${BORINGSSL}/src/include" "${LIBLOG}/include"
     "${SELINUX}/include" "${ZLIB}")
-target_compile_options(toybox PRIVATE -DANDROID -DNDEBUG -Os -Wall -Werror
-    -Wno-char-subscripts -Wno-deprecated-declarations
-    -Wno-invalid-source-encoding -Wno-missing-field-initializers
-    -Wno-pointer-arith -Wno-pointer-sign -Wno-sign-compare
-    -Wno-string-plus-int -Wno-unused-parameter -Wno-unused-variable
-    -funsigned-char -ffunction-sections -fdata-sections
+set(TOYBOX_CFLAGS -Os -Wall -Werror -Wno-char-subscripts
+    -Wno-deprecated-declarations -Wno-invalid-source-encoding
+    -Wno-missing-field-initializers -Wno-pointer-arith -Wno-pointer-sign
+    -Wno-sign-compare -Wno-string-plus-int -Wno-unused-parameter
+    -Wno-unused-variable -funsigned-char -ffunction-sections -fdata-sections
     -fno-asynchronous-unwind-tables "-DTOYBOX_VENDOR=\"-android\"")
+target_compile_options(toybox PRIVATE
+    "$<$<COMPILE_LANGUAGE:C,CXX>:${TOYBOX_CFLAGS}>")
 
 # toybox_symlinks of Android.bp: relative links in /system/bin.  CMake does
 # not split a list after a "[", so the "[" link is in the command.
@@ -127,7 +129,7 @@ set(TOYBOX_LINKS acpi base64 basename blkdiscard blockdev brctl cal cat
     uptime usleep uudecode uuencode uuidgen vi vmstat watch wc which whoami
     xargs xxd yes zcat)
 add_custom_target(android_root_toybox ALL
-    COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:toybox>
+    COMMAND ${SOONG_STRIP} $<TARGET_FILE:toybox>
         "${ROOT}/system/bin/toybox"
     COMMAND sh -c
         "cd \"$0\" && ln -sf toybox '[' && for n; do ln -sf toybox \"$n\"; done"

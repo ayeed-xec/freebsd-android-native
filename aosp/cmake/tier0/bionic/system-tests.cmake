@@ -59,86 +59,104 @@ set(SYSTEM_INCLUDES "${LIBBASE}/include" "${FMTLIB}/include"
 set(LIBUTILS_INCLUDES "${LIBUTILS}/include" "${LIBUTILS}/binder/include"
     ${SYSTEM_INCLUDES})
 
-# libgmock.  The libc++ of the bionic sysroot has no exceptions
-# (libcxx.cmake), so gmock is built without them; no test here uses
-# testing::Throw.
+# gmock_flags and libgmock.  The libc++ of the bionic sysroot has no
+# exceptions (libcxx.cmake), so gmock is built without the -fexceptions of
+# its module; no test here uses testing::Throw.
 aosp_library(gmock
     SRCS "${GMOCK}/src/gmock-all.cc"
-    FLAGS -std=gnu++20 -Wall -Werror -Wno-missing-field-initializers
-        -Wno-sign-compare -Wno-unused-parameter
-    INCLUDES "${GMOCK}" "${GMOCK}/include" "${GTEST}/include")
+    FLAGS -Wall -Werror -Wno-missing-field-initializers -Wno-sign-compare
+        -Wno-unused-parameter
+    INCLUDES "${GMOCK}" "${GMOCK}/include" "${GTEST}/include"
+    SOONG EXTERNAL RTTI)
+# libgtest_defaults and libgtest_main.
 aosp_library(gtest_main
     SRCS "${GTEST}/src/gtest_main.cc"
-    FLAGS -std=gnu++20
-    INCLUDES "${GTEST}/include")
+    FLAGS -Wall -Werror -Wno-unused-private-field
+    INCLUDES "${GTEST}/include"
+    SOONG EXTERNAL)
 aosp_library(gtest_isolated_main
     SRCS "${GTEST_ISOLATED}/Main.cpp"
-    FLAGS -std=gnu++20 -Wall -Werror
+    FLAGS -Wall -Werror -Wextra
     INCLUDES "${GTEST_ISOLATED}/include" "${GTEST}/include")
 
 # libcutils_sockets and libcutils, the android target, without
 # iosched_policy.cpp and uevent.cpp, which need linux-compat headers that
 # bionic-freebsd does not have yet.  ashmem-dev.cpp uses memfd, as
-# sys.use_memfd=true in the build.prop of the jail tells it.
-set(LIBCUTILS_SRCS sockets.cpp android_get_control_file.cpp
+# sys.use_memfd=true in the build.prop of the jail tells it.  libcutils
+# has libcutils_sockets in it; only libcutils adds -Wall and -Wextra to
+# the flags of libcutils_defaults.
+set(LIBCUTILS_SOCKETS_SRCS sockets.cpp android_get_control_file.cpp
     socket_inaddr_any_server_unix.cpp socket_local_client_unix.cpp
     socket_local_server_unix.cpp socket_network_client_unix.cpp
-    sockets_utils.cpp sockets_unix.cpp config_utils.cpp load_file.cpp
-    native_handle.cpp properties.cpp record_stream.cpp strlcpy.c
-    canned_fs_config.cpp fs_config.cpp fs.cpp hashmap.cpp multiuser.cpp
-    str_parms.cpp android_reboot.cpp klog.cpp partition_utils.cpp
-    qtaguid.cpp trace-dev.cpp ashmem-dev.cpp)
+    sockets_utils.cpp sockets_unix.cpp)
+list(TRANSFORM LIBCUTILS_SOCKETS_SRCS PREPEND "${LIBCUTILS}/")
+aosp_library(cutils_sockets
+    SRCS ${LIBCUTILS_SOCKETS_SRCS}
+    FLAGS -Wno-exit-time-destructors
+    INCLUDES ${SYSTEM_INCLUDES})
+set(LIBCUTILS_SRCS config_utils.cpp load_file.cpp native_handle.cpp
+    properties.cpp record_stream.cpp strlcpy.c canned_fs_config.cpp
+    fs_config.cpp fs.cpp hashmap.cpp multiuser.cpp str_parms.cpp
+    android_reboot.cpp klog.cpp partition_utils.cpp qtaguid.cpp
+    trace-dev.cpp ashmem-dev.cpp)
 list(TRANSFORM LIBCUTILS_SRCS PREPEND "${LIBCUTILS}/")
 # -Wextra turns on the clang 22 warning about designated initializers
 # again, which AOSP's clang does not give.
 aosp_library(cutils
     SRCS ${LIBCUTILS_SRCS}
-    FLAGS $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++20> -Wall -Wextra -Werror
-        -Wno-exit-time-destructors -Wno-missing-designated-field-initializers
+    FLAGS -Wno-exit-time-destructors -Werror -Wall -Wextra
+        -Wno-missing-designated-field-initializers
     INCLUDES ${SYSTEM_INCLUDES})
+target_link_libraries(cutils INTERFACE cutils_sockets)
 
 aosp_library(vndksupport
     SRCS "${LIBVNDKSUPPORT}/linker.cpp"
-    FLAGS -std=gnu++20 -Wall -Werror
+    FLAGS -Wall -Werror
     INCLUDES "${LIBVNDKSUPPORT}/include/vndksupport"
         "${LIBVNDKSUPPORT}/include" "${LIBLOG}/include")
 
-# libutils with libutils_binder in it, the android target.
+# libutils_defaults_nodeps with its android cflags, for libutils and
+# libutils_binder.  libutils has libutils_binder in it, the android target.
+set(LIBUTILS_CFLAGS -Wall -Werror -Wno-exit-time-destructors
+    -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION -Wthread-safety
+    -fvisibility=protected)
 set(LIBUTILS_BINDER_SRCS Errors.cpp RefBase.cpp SharedBuffer.cpp
     String16.cpp String8.cpp StrongPointer.cpp Unicode.cpp VectorImpl.cpp)
 list(TRANSFORM LIBUTILS_BINDER_SRCS PREPEND "${LIBUTILS}/binder/")
-set_source_files_properties(${LIBUTILS_BINDER_SRCS} PROPERTIES
-    COMPILE_OPTIONS
-    "-Winvalid-offsetof;-Wsequence-point;-Wzero-as-null-pointer-constant")
+aosp_library(utils_binder
+    SRCS ${LIBUTILS_BINDER_SRCS}
+    FLAGS ${LIBUTILS_CFLAGS} -Winvalid-offsetof -Wsequence-point
+        -Wzero-as-null-pointer-constant
+    INCLUDES ${LIBUTILS_INCLUDES} "${LIBVNDKSUPPORT}/include"
+    SOONG AFDO MODULE libutils_binder)
 set(LIBUTILS_SRCS FileMap.cpp JenkinsHash.cpp LightRefBase.cpp Looper.cpp
     NativeHandle.cpp Printer.cpp StopWatch.cpp SystemClock.cpp Threads.cpp
     Timers.cpp Tokenizer.cpp misc.cpp Trace.cpp)
 list(TRANSFORM LIBUTILS_SRCS PREPEND "${LIBUTILS}/")
 aosp_library(utils
-    SRCS ${LIBUTILS_SRCS} ${LIBUTILS_BINDER_SRCS}
-    FLAGS -std=gnu++20 -Wall -Werror -Wno-exit-time-destructors
-        -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
-        -Wthread-safety -fvisibility=protected
-    INCLUDES ${LIBUTILS_INCLUDES} "${LIBVNDKSUPPORT}/include")
+    SRCS ${LIBUTILS_SRCS}
+    FLAGS ${LIBUTILS_CFLAGS}
+    INCLUDES ${LIBUTILS_INCLUDES} "${LIBVNDKSUPPORT}/include"
+    SOONG AFDO MODULE libutils)
+target_link_libraries(utils INTERFACE utils_binder)
 
-# A cc_test of system/: libc.so, libdl.so and libdl_android.so, with the
+# A cc_test with gtest: libc.so, libdl.so and libdl_android.so, with the
 # other libraries and libc++ static.  run-gtest-suite.sh runs it in the
 # jail through PT_INTERP.
+#   system_test(<name> SRCS <src>... [LIBS <lib>...] [FLAGS <cflags>...]
+#       [INCLUDES <dir>...] [SOONG <soong_cc options>...])
+# The cflags go to C and C++.
 function(system_test name)
-	cmake_parse_arguments(T "" "" "SRCS;LIBS;FLAGS;INCLUDES" ${ARGN})
+	cmake_parse_arguments(T "" "" "SRCS;LIBS;FLAGS;INCLUDES;SOONG" ${ARGN})
 	add_executable(${name} ${T_SRCS})
+	soong_cc(${name} TEST GTEST ${T_SOONG})
 	add_dependencies(${name} crt)
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_system_includes(${name} "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE ${T_INCLUDES}
 	    ${SYSTEM_INCLUDES} "${GTEST}/include")
-	# The test flags go first so AOSP's -Wno-* flags still win over
-	# -Wextra.  NDEBUG as in AOSP release builds.
-	target_compile_options(${name} PRIVATE -std=gnu++20 ${T_FLAGS}
-	    ${AOSP_CXX_FLAGS} -DNDEBUG)
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld -pie
-	    -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--gc-sections
-	    "${GEN}/crtbegin_dynamic.o")
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:${T_FLAGS}>")
+	target_link_options(${name} PRIVATE "${GEN}/crtbegin_dynamic.o")
 	# libc, libm and libdl are the system_shared_libs of every Android
 	# program.
 	target_link_libraries(${name} PRIVATE -Wl,--start-group ${T_LIBS}
@@ -171,8 +189,9 @@ set_source_files_properties("${LIBBASE}/result_test.cpp" PROPERTIES
 system_test(libbase_test
     SRCS ${LIBBASE_TEST_SRCS}
     LIBS gmock
-    FLAGS -std=gnu++23 -D_FILE_OFFSET_BITS=64
-    INCLUDES "${LIBBASE}" "${GMOCK}/include")
+    FLAGS -D_FILE_OFFSET_BITS=64
+    INCLUDES "${LIBBASE}" "${GMOCK}/include"
+    SOONG CPP_STD gnu++23)
 
 set(LIBLOG_TEST_SRCS libc_test.cpp liblog_default_tag.cpp
     liblog_global_state.cpp liblog_test.cpp log_id_test.cpp
@@ -210,16 +229,16 @@ system_test(libutils_test
 # The libraries that Singleton_test loads from the directory of the test.
 function(system_test_lib name src)
 	add_library(${name} SHARED "${src}")
+	soong_cc(${name} TEST GTEST)
 	add_dependencies(${name} crt)
 	set_target_properties(${name} PROPERTIES PREFIX "" SKIP_BUILD_RPATH ON
 	    LINK_DEPENDS "${GEN}/crtbegin_so.o")
-	target_include_directories(${name} SYSTEM BEFORE PRIVATE
-	    "${CXX_INCLUDE}")
+	soong_system_includes(${name} "${CXX_INCLUDE}")
 	target_include_directories(${name} PRIVATE ${LIBUTILS_INCLUDES})
-	target_compile_options(${name} PRIVATE -std=gnu++20 -Wall -Werror
-	    ${AOSP_CXX_FLAGS})
-	target_link_options(${name} PRIVATE -nostdlib -fuse-ld=lld
-	    -Wl,--no-undefined "-Wl,-soname,${name}.so" "${GEN}/crtbegin_so.o")
+	target_compile_options(${name} PRIVATE
+	    "$<$<COMPILE_LANGUAGE:C,CXX>:-Wall;-Werror>")
+	target_link_options(${name} PRIVATE "-Wl,-soname,${name}.so"
+	    "${GEN}/crtbegin_so.o")
 	target_link_libraries(${name} PRIVATE ${ARGN} ${LIBCXX_STATIC} c_shared
 	    "${GEN}/crtend_so.o")
 	if(BUILTINS_LIB)
@@ -257,22 +276,35 @@ foreach(suite libbase_test liblog-unit-tests libcutils_test libutils_test)
 	    ENVIRONMENT "LD_LIBRARY_PATH=${GEN};${RUN_SUITE_PATH}")
 endforeach()
 
+# libutils_freebsd_test: androidSetThreadName() on bionic-freebsd.
+system_test(libutils_freebsd_test
+    SRCS "${CMAKE_CURRENT_SOURCE_DIR}/libutils_freebsd_test.cpp"
+    LIBS gtest_main utils cutils vndksupport
+    INCLUDES ${LIBUTILS_INCLUDES})
+add_test(NAME libutils_freebsd_test COMMAND ${RUN_SUITE}
+    -j "${GEN}/bionic-tests-jail.conf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libutils_freebsd_test.excluded"
+    "$<TARGET_FILE:linker64>" "$<TARGET_FILE:libutils_freebsd_test>")
+set_tests_properties(libutils_freebsd_test PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${GEN};${RUN_SUITE_PATH}")
+
 # zlib_tests: the cc_test of external/zlib, with libz.so and the static
 # zlib_google_compression_utils_portable of libz_defaults.  Its files
 # include "gtest.h", so googletest's include/gtest is on the include path,
-# as in the Android.bp.  Its cflags have no -Werror, and infcover.cc has an
-# unused variable, so -Wno-error.  Android runs it in one process and not
-# as root, so its tests run one at a time (-s) as the calling user.
+# as in the Android.bp.  Android runs it in one process and not as root,
+# so its tests run one at a time (-s) as the calling user.
 aosp_library(zlib_google_compression_utils_portable
     SRCS "${ZLIB}/google/compression_utils_portable.cc"
     FLAGS ${ZLIB_FLAGS}
-    INCLUDES "${ZLIB}" "${ZLIB}/google")
+    INCLUDES "${ZLIB}" "${ZLIB}/google"
+    SOONG EXTERNAL)
 system_test(zlib_tests
     SRCS "${ZLIB}/contrib/tests/infcover.cc"
         "${ZLIB}/contrib/tests/utils_unittest.cc"
     LIBS gtest_main zlib_google_compression_utils_portable z_shared
-    FLAGS -DCMAKE_STANDALONE_UNITTESTS -Wno-unused-parameter -Wno-error
-    INCLUDES "${ZLIB}" "${ZLIB}/google" "${GTEST}/include/gtest")
+    FLAGS -DCMAKE_STANDALONE_UNITTESTS -Wno-unused-parameter
+    INCLUDES "${ZLIB}" "${ZLIB}/google" "${GTEST}/include/gtest"
+    SOONG EXTERNAL)
 add_test(NAME zlib_tests COMMAND ${RUN_SUITE}
     -j "${GEN}/bionic-tests-jail.conf" -s
     "${CMAKE_CURRENT_SOURCE_DIR}/zlib_tests.excluded"
