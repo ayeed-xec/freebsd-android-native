@@ -141,9 +141,8 @@ set(BIONIC_TEST_LIBS -Wl,--start-group gtest_isolated gtest tinyxml2 base log
 # The libraries of tests/libs that the loader tests load, as in
 # bionic_testlib_defaults: libc.so, static libc++, -Wl,--no-undefined and
 # DT_RUNPATH $ORIGIN.  They go in bionic-loader-test-libs next to the test
-# binary.  GetTestLibRoot() finds that directory from AT_EXECPATH, which
-# names linker64 when the suite runs as "linker64 bionic-unit-tests";
-# linker64 is in the same directory.
+# binary.  GetTestLibRoot() finds that directory from AT_EXECPATH, and
+# run-gtest-suite.sh copies it next to the binary in the jail.
 set(TESTLIB_SRC "${BIONIC_TESTS}/libs")
 set(TESTLIB_DIR "${CMAKE_CURRENT_BINARY_DIR}/bionic-loader-test-libs")
 function(bionic_test_lib name)

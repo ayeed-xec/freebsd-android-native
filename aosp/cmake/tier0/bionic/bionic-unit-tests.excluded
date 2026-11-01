@@ -33,22 +33,9 @@
 #			have yet: a row of the tier-0 table of abi-gap.md
 #	env:<item>	a quirk of the FreeBSD dev VM, not of Android
 #
-# The env:linker64-run rows apply only when the suite runs as
-# "linker64 bionic-unit-tests", which run-gtest-suite.sh does when it
-# cannot make the jail.
-#
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 
-dlext.ns_hidden_child  env:linker64-run  Test runs a helper program with execve; its PT_INTERP /system/bin/linker64 exists only in the jail.
-dlext.ns_inaccessible_error_message  env:linker64-run  Test expects "dlopened by" GetExecutablePath() (AT_EXECPATH, linker64); linker64 names bionic-unit-tests.
-dlext.ns_isolated  env:linker64-run  Test expects "dlopened by" GetExecutablePath() (AT_EXECPATH, linker64); linker64 names bionic-unit-tests.
-dlext.ns_shared  env:linker64-run  Test expects "dlopened by" GetExecutablePath() (AT_EXECPATH, linker64); linker64 names bionic-unit-tests.
-dlfcn.dladdr_executable  env:linker64-run  AT_EXECPATH names linker64, so GetExecutablePath() is not the executable that dladdr() reports.
-dlfcn.dladdr_libc  env:linker64-run  dli_fname is where linker64 found libc.so (LD_LIBRARY_PATH, the build tree); test expects the real path in the runtime APEX. In the jail, F_KINFO gives that path through the /system/lib64/libc.so link.
-dlfcn.dlopen_executable_by_absolute_path  env:linker64-run  GetExecutablePath() gives linker64 (AT_EXECPATH); dlopen of linker64 aborts with "linker cannot load itself".
-elftls_dl.dlopen_ie_error  env:linker64-run  Test runs a helper program with execve; its PT_INTERP /system/bin/linker64 exists only in the jail.
 ifaddrs.getifaddrs_interfaces  abi:sys-class-net  Test compares the link entries with the symbolic links of /sys/class/net, and asysfs(4) has no /sys/class/net (register row 73).
-link.r_debug  env:linker64-run  AT_PHDR describes linker64, which has no DT_DEBUG; under PT_INTERP it describes the test binary.
 stdio_ext.__fbufsize  abi:proc-blksize  stdio sizes the buffer from st_blksize; aprocfs gives 4096 for /proc/version, and Linux procfs gives 1024 (register row 74).
 sys_xattr.flistattr  flistxattr  extattr_list_fd(2) lists one name space in one call and in another format, so flistxattr() gives ENOTSUP (no one-call form).
 sys_xattr.flistattr_invalid_fd  flistxattr  flistxattr() gives ENOTSUP before any call, so a bad descriptor does not give EBADF.

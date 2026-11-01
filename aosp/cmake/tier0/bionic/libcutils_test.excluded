@@ -33,10 +33,7 @@
 #	env:<item>	a quirk of the FreeBSD dev VM, not of Android
 #
 # The tests of the files that system-tests.cmake does not build yet are
-# here too, so that this file names every test that does not run.  The
-# env:linker64-run rows apply only when the suite runs as
-# "linker64 libcutils_test", which run-gtest-suite.sh does when it cannot
-# make the jail.
+# here too, so that this file names every test that does not run.
 #
 # Tests that call GTEST_SKIP() on FreeBSD are not listed here.
 

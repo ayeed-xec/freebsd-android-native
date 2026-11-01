@@ -45,10 +45,8 @@
 # under "adb shell".  The jail is made with mdo(1) and removed at the end.
 # The tests run as the calling user, who owns /data/local/tmp as the shell
 # user does on a device, or with -r as root, as Android runs a test module
-# that has require_root.  When mdo cannot give root, the command runs as it
-# is, and the env:linker64-run tests are left out as well.  The tests that
-# need the jail's helper programs, its property service or its Android root
-# then fail.
+# that has require_root.  When mdo cannot give root, the script fails at
+# once: the suites need the jail's Android root.
 
 set -u
 
@@ -75,8 +73,11 @@ shift $((OPTIND - 1))
 excluded=$1
 shift
 
-keep=
-if [ -n "$conf" ] && mdo true 2>/dev/null; then
+if [ -n "$conf" ]; then
+	if ! mdo true 2>/dev/null; then
+		echo "run-gtest-suite.sh: mdo cannot give root for the jail" >&2
+		exit 1
+	fi
 	# Other build trees in the VM use the same jail and Android root.
 	if [ -z "${GTEST_JAIL_LOCKED:-}" ]; then
 		GTEST_JAIL_LOCKED=1 exec lockf -k /tmp/bionic_tests.lock \
@@ -96,7 +97,6 @@ if [ -n "$conf" ] && mdo true 2>/dev/null; then
 	mkdir "$jail_root$dir" &&
 	    cp -Rp "$prog" $data "$jail_root$dir" || exit 1
 	unset LD_LIBRARY_PATH
-	keep=env:linker64-run
 	# jexec -u sets the PATH of the login class; the tests get ours.
 	set -- mdo jexec -u "$user" -d /tmp bionic_tests /bin/sh -c \
 	    'PATH=$1; export PATH; shift; "$0" "$@"; exit $?' \
@@ -104,8 +104,7 @@ if [ -n "$conf" ] && mdo true 2>/dev/null; then
 fi
 
 tmp=$(mktemp -d)
-awk -v keep="$keep" '!/^#/ && NF && $2 != keep { print $1 }' "$excluded" \
-    > "$tmp/excluded"
+awk '!/^#/ && NF { print $1 }' "$excluded" > "$tmp/excluded"
 "$@" --no_isolate --gtest_list_tests |
     awk '/^[^ ]/ { s = $1 } /^  / { print s $1 }' |
     grep -v DISABLED_ > "$tmp/built"
